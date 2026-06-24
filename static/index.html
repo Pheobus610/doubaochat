@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>初中语音学习</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-row">
+      <div>
+        <h1>初中语音学习 Demo</h1>
+        <p class="subtitle">分步学习：选年级与科目 → 上传 PDF → 听讲解 → 做题 → 分析 → 向 AI 讲题</p>
+      </div>
+      <button type="button" id="settingsBtn" class="btn btn-secondary">设置</button>
+    </div>
+    <nav class="stepper" id="stepper" aria-label="学习步骤">
+      <button type="button" class="stepper-item" data-step="grade"><span class="stepper-num">1</span><span class="stepper-label">选年级科目</span></button>
+      <button type="button" class="stepper-item" data-step="upload"><span class="stepper-num">2</span><span class="stepper-label">上传</span></button>
+      <button type="button" class="stepper-item" data-step="lesson"><span class="stepper-num">3</span><span class="stepper-label">讲解</span></button>
+      <button type="button" class="stepper-item" data-step="quiz"><span class="stepper-num">4</span><span class="stepper-label">做题</span></button>
+      <button type="button" class="stepper-item" data-step="analysis"><span class="stepper-num">5</span><span class="stepper-label">分析</span></button>
+      <button type="button" class="stepper-item" data-step="teach"><span class="stepper-num">6</span><span class="stepper-label">讲题</span></button>
+    </nav>
+    <div id="statusBanner" class="status-banner hidden"></div>
+    <div id="voiceStatus" class="voice-status hidden"></div>
+  </header>
+
+  <main class="layout">
+    <div class="page-view">
+      <section class="page-panel card" data-step="grade" id="page-grade">
+        <h2>步骤 1：选择年级与科目</h2>
+        <p class="hint-text">请选择年级与科目（选中后会高亮显示）。</p>
+        <p class="selection-label">年级</p>
+        <div class="grade-row" id="gradeRow">
+          <button type="button" class="btn btn-secondary grade-btn" data-grade="初一" aria-pressed="false">初一</button>
+          <button type="button" class="btn btn-secondary grade-btn" data-grade="初二" aria-pressed="false">初二</button>
+          <button type="button" class="btn btn-secondary grade-btn" data-grade="初三" aria-pressed="false">初三</button>
+        </div>
+        <p class="selection-label">科目</p>
+        <div class="grade-row" id="subjectRow">
+          <button type="button" class="btn btn-secondary subject-btn" data-subject="数学" aria-pressed="false">数学</button>
+          <button type="button" class="btn btn-secondary subject-btn" data-subject="语文" aria-pressed="false">语文</button>
+          <button type="button" class="btn btn-secondary subject-btn" data-subject="英语" aria-pressed="false">英语</button>
+        </div>
+        <div id="gradeSelectionCard" class="grade-summary">
+          <span class="grade-summary-label">当前选择</span>
+          <span id="gradeSummaryText" class="grade-summary-text">尚未选择年级与科目</span>
+        </div>
+      </section>
+
+      <section class="page-panel card" data-step="upload" id="page-upload">
+        <h2>步骤 2：上传教辅 PDF 并开始</h2>
+        <p id="uploadGradeHint" class="hint-text"></p>
+        <div id="dropZone" class="drop-zone">
+          <p class="drop-title">拖拽 PDF 到此处</p>
+          <p class="drop-hint">或</p>
+          <label class="btn btn-secondary">
+            选择文件
+            <input type="file" id="fileInput" accept=".pdf,application/pdf" hidden />
+          </label>
+        </div>
+        <ul id="fileList" class="file-list"></ul>
+        <button type="button" id="startSessionBtn" class="btn btn-primary">上传完成后，开始学习</button>
+      </section>
+
+      <section class="page-panel card" data-step="lesson" id="page-lesson">
+        <h2>步骤 3：AI 语音讲解知识点</h2>
+        <div class="action-row">
+          <button type="button" id="explainBtn" class="btn btn-primary">生成讲解</button>
+          <button type="button" id="playLessonBtn" class="btn btn-secondary">播报讲解</button>
+          <button type="button" id="pauseLessonBtn" class="btn btn-secondary hidden">暂停</button>
+          <button type="button" id="stopLessonBtn" class="btn btn-secondary hidden">停止</button>
+          <span id="lessonPlayStatus" class="hint-text"></span>
+        </div>
+        <div id="lessonBox" class="content-box lesson-box">尚未生成讲解内容。</div>
+      </section>
+
+      <section class="page-panel card" data-step="quiz" id="page-quiz">
+        <h2>步骤 4：做题巩固</h2>
+        <div class="action-row">
+          <button type="button" id="generateQuizBtn" class="btn btn-primary">生成练习题</button>
+          <span id="quizProgress" class="hint-text">未开始</span>
+        </div>
+        <div id="quizDashboard" class="quiz-dashboard hidden">
+          <div class="quiz-progress-track">
+            <div id="quizProgressBar" class="quiz-progress-fill" style="width:0%"></div>
+          </div>
+          <div class="quiz-stats">
+            <span class="quiz-stat"><span class="quiz-stat-label">已答</span><span id="quizAnsweredCount" class="quiz-stat-value">0/0</span></span>
+            <span class="quiz-stat quiz-stat-correct"><span class="quiz-stat-label">答对</span><span id="quizCorrectCount" class="quiz-stat-value">0</span></span>
+            <span class="quiz-stat quiz-stat-wrong"><span class="quiz-stat-label">答错</span><span id="quizWrongCount" class="quiz-stat-value">0</span></span>
+            <span class="quiz-stat quiz-stat-rate"><span class="quiz-stat-label">正确率</span><span id="quizAccuracy" class="quiz-stat-value">—</span></span>
+          </div>
+        </div>
+        <div id="quizBox" class="quiz-box">
+          <p class="hint-text">生成题目后在此作答。</p>
+        </div>
+      </section>
+
+      <section class="page-panel card" data-step="analysis" id="page-analysis">
+        <h2>步骤 5：错题分析与变式</h2>
+        <button type="button" id="analyzeBtn" class="btn btn-primary">生成错题分析</button>
+        <div id="analysisReasonBox" class="content-box">暂无分析结果。</div>
+        <div class="action-row">
+          <span id="variantProgress" class="hint-text">变式题未开始</span>
+        </div>
+        <div id="variantQuizBox" class="quiz-box hidden"></div>
+      </section>
+
+      <section class="page-panel card" data-step="teach" id="page-teach">
+        <h2>步骤 6：向 AI 讲题（互讲互议）</h2>
+        <div class="action-row">
+          <button type="button" id="inviteTeachBtn" class="btn btn-secondary">获取 AI 邀请</button>
+          <span id="teachUnlockBadge" class="unlock-badge locked">未解锁</span>
+          <span id="teachRoundBadge" class="hint-text">互讲 0 / 2 轮</span>
+        </div>
+        <details class="teach-guide">
+          <summary>讲题小贴士（点击展开）</summary>
+          <ul class="teach-guide-list">
+            <li><strong>说清思路</strong>：先讲这道题考查什么知识点，再讲解题步骤。</li>
+            <li><strong>分步讲解</strong>：第一步做什么、第二步做什么，每一步为什么这样做。</li>
+            <li><strong>点出关键</strong>：哪一步容易出错？为什么要这样算而不那样算？</li>
+            <li><strong>总结归纳</strong>：这道题用到了什么方法？以后遇到类似题怎么入手？</li>
+          </ul>
+        </details>
+        <div id="teachChatLog" class="teach-chat-log" aria-live="polite">
+          <p class="teach-chat-placeholder hint-text">可先获取 AI 邀请，或直接向 AI 讲解（最多 2 轮）。</p>
+        </div>
+        <div id="recordingPanel" class="recording-panel hidden">
+          <canvas id="waveformCanvas" width="300" height="40" aria-hidden="true"></canvas>
+          <span id="recordingTimer" class="recording-timer">00:00</span>
+        </div>
+        <label class="field">
+          <span>请用语音或文字向 AI 讲解：</span>
+          <div class="input-inline">
+            <input type="text" id="teachInput" placeholder="例如：先通分再约分，因为..." />
+            <button type="button" id="teachMicBtn" class="btn btn-icon mic-btn" title="语音输入" aria-label="开始语音输入">
+              <svg class="mic-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </button>
+          </div>
+        </label>
+        <button type="button" id="teachSubmitBtn" class="btn btn-primary">提交第 1 轮讲解</button>
+      </section>
+    </div>
+
+    <footer class="page-nav">
+      <button type="button" id="navPrevBtn" class="btn btn-secondary hidden">上一步</button>
+      <button type="button" id="navNextBtn" class="btn btn-primary" disabled>下一步</button>
+    </footer>
+  </main>
+
+  <div id="permissionGate" class="permission-gate">
+    <div class="permission-gate-box">
+      <h3>启用语音功能</h3>
+      <p class="permission-gate-hint">
+        出于浏览器安全策略，麦克风与语音播放需要在您<strong>点击按钮</strong>后才能开启，无法在页面加载时自动弹窗。
+      </p>
+      <button type="button" id="enableVoiceBtn" class="btn btn-primary">
+        开启麦克风与语音播放
+      </button>
+      <button type="button" id="skipVoiceBtn" class="btn btn-secondary permission-skip">
+        暂不开启（仅文字模式）
+      </button>
+    </div>
+  </div>
+
+  <div id="globalLoading" class="global-loading hidden" aria-live="polite" aria-busy="true">
+    <div class="global-loading-box">
+      <div class="spinner" role="status" aria-label="加载中"></div>
+      <p id="globalLoadingText" class="global-loading-text">请稍候…</p>
+    </div>
+  </div>
+
+  <div id="learningCompleteModal" class="modal hidden">
+    <div class="modal-content">
+      <h3>学习已结束</h3>
+      <p id="learningCompleteMessage" class="modal-hint">
+        你已完成 2 轮向 AI 讲题，本次学习流程结束。辛苦了！
+      </p>
+      <div class="modal-actions">
+        <button type="button" id="learningCompleteClose" class="btn btn-primary">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-content">
+      <h3>设置</h3>
+      <p class="modal-hint">API Key 仅保存在本浏览器 sessionStorage，不会上传到其他服务器。</p>
+      <label class="field">
+        <span>方舟 API Key</span>
+        <input type="password" id="settingsApiKey" placeholder="Bearer 密钥" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>模型 / 接入点 ID</span>
+        <input type="text" id="settingsModel" placeholder="ep-xxxxxxxx 或 doubao-seed-..." />
+      </label>
+      <label class="field">
+        <span>TTS 音色</span>
+        <input type="text" id="settingsVoice" placeholder="zh_female_qingxin" />
+      </label>
+      <label class="field checkbox-field">
+        <input type="checkbox" id="settingsAutoSpeak" />
+        <span>自动播报 AI 文本</span>
+      </label>
+      <div class="modal-actions">
+        <button type="button" id="settingsClose" class="btn btn-secondary">取消</button>
+        <button type="button" id="settingsSave" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/voice.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
