@@ -438,8 +438,16 @@ function teachChatLabel(turn) {
 function renderTeachChat() {
   if (!teachChatLog) return;
   if (!state.teachTurns.length) {
-    teachChatLog.innerHTML =
-      '<p class="teach-chat-placeholder hint-text">可先获取 AI 邀请，或直接向 AI 讲解（最多 2 轮）。</p>';
+    teachChatLog.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </div>
+        <div class="empty-state-title">开始向 AI 老师讲题</div>
+        <div class="empty-state-desc">点击下方「获取 AI 邀请」听老师提问，或直接按住麦克风按钮开始你的讲解（最多 2 轮）。</div>
+      </div>`;
     return;
   }
   teachChatLog.innerHTML = state.teachTurns
@@ -895,7 +903,16 @@ function matchErrorType(category) {
 function renderAnalysisReason() {
   if (!analysisReasonBox) return;
   if (!state.analysisSummary && !state.analysisReasons.length) {
-    analysisReasonBox.textContent = "暂无分析结果。请点击「生成错题分析」。";
+    analysisReasonBox.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+        </div>
+        <div class="empty-state-title">还没有错题分析</div>
+        <div class="empty-state-desc">点击下方「生成错题分析」按钮，AI 会帮你梳理错因并给出针对性建议。</div>
+      </div>`;
     return;
   }
   const parts = [];
@@ -992,7 +1009,16 @@ function renderCurrentVariant() {
 function renderCurrentQuestion() {
   renderQuizDashboard();
   if (!state.quizQuestions.length) {
-    quizBox.innerHTML = `<p class="hint-text">生成题目后在此作答。</p>`;
+    quizBox.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+          </svg>
+        </div>
+        <div class="empty-state-title">还没有练习题</div>
+        <div class="empty-state-desc">点击下方「生成练习题」按钮，AI 会根据讲解内容为你出题。</div>
+      </div>`;
     quizProgress.textContent = "未开始";
     updateNavButtons();
     return;

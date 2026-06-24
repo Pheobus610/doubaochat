@@ -32,12 +32,12 @@ function setGlobalLoading(active, message = "请稍候…") {
   if (message) setGlobalLoadingMessage(message);
   if (active) {
     globalLoadingCount += 1;
-    overlay.classList.remove("hidden");
+    overlay.classList.remove("is-hidden");
     return;
   }
   globalLoadingCount = Math.max(0, globalLoadingCount - 1);
   if (globalLoadingCount === 0) {
-    overlay.classList.add("hidden");
+    overlay.classList.add("is-hidden");
   }
 }
 

@@ -1,7 +1,9 @@
 :root {
   --bg: #0f1419;
   --surface: #1a2332;
+  --surface-active: #1f2b3e;
   --border: #2d3a4f;
+  --border-active: #3b82f6;
   --text: #e7ecf3;
   --muted: #8b9cb3;
   --accent: #3b82f6;
@@ -10,6 +12,8 @@
   --assistant-bg: #243044;
   --error: #f87171;
   --success: #4ade80;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-active: 0 4px 20px rgba(59, 130, 246, 0.12), 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 * {
@@ -227,10 +231,20 @@ body {
   display: none;
   flex-direction: column;
   gap: 0.75rem;
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .page-panel.is-active {
   display: flex;
+  animation: panel-in 0.22s ease-out forwards;
+}
+
+@keyframes panel-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .page-nav {
@@ -254,11 +268,21 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  box-shadow: var(--shadow-card);
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* 激活面板：更亮背景 + 蓝色边框 + 阴影 */
+.page-panel.is-active.card {
+  background: var(--surface-active);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: var(--shadow-active);
 }
 
 .card h2 {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .hint-text {
@@ -611,6 +635,13 @@ body {
   justify-content: center;
   pointer-events: none;
   padding: 0.6rem 1rem;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.global-loading.is-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .global-loading-box {
@@ -624,6 +655,12 @@ body {
   background: var(--surface);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
+  transform: translateY(0);
+  transition: transform 0.2s ease;
+}
+
+.global-loading.is-hidden .global-loading-box {
+  transform: translateY(-8px);
 }
 
 .global-loading-text {
@@ -1006,6 +1043,41 @@ body {
 .err-other .error-reason-tag {
   background: rgba(139, 156, 179, 0.18);
   color: var(--muted);
+}
+
+/* ===== 空状态 ===== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.empty-state-icon {
+  width: 3rem;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--accent);
+  margin-bottom: 0.2rem;
+}
+
+.empty-state-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-state-desc {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 18rem;
 }
 
 .wrong-question-list {
