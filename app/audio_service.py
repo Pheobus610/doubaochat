@@ -286,6 +286,7 @@ def synthesize_speech(
             segments.append(
                 {
                     "index": index,
+                    "text": chunk,
                     "audio_url": result.get("audio_url"),
                     "audio_base64": result.get("audio_base64"),
                 }

@@ -72,7 +72,13 @@
           <button type="button" id="playLessonBtn" class="btn btn-secondary">播报讲解</button>
           <button type="button" id="pauseLessonBtn" class="btn btn-secondary hidden">暂停</button>
           <button type="button" id="stopLessonBtn" class="btn btn-secondary hidden">停止</button>
+          <button type="button" id="prevSegBtn" class="btn btn-ghost hidden" title="上一段" aria-label="上一段">‹</button>
+          <button type="button" id="nextSegBtn" class="btn btn-ghost hidden" title="下一段" aria-label="下一段">›</button>
           <span id="lessonPlayStatus" class="hint-text"></span>
+        </div>
+        <div class="lesson-progress-row hidden" id="lessonProgressRow">
+          <input type="range" id="lessonProgress" class="lesson-progress" min="0" max="1000" value="0" step="1" aria-label="讲解播放进度">
+          <span id="lessonTime" class="hint-text lesson-time">00:00 / 00:00</span>
         </div>
         <div id="lessonBox" class="content-box lesson-box">尚未生成讲解内容。</div>
       </section>

@@ -1249,20 +1249,69 @@ function renderLessonText(text) {
   lessonBox.innerHTML = html.join("");
 }
 
-function setLessonHighlight(sentenceIndex) {
-  lessonBox.querySelectorAll(".lesson-sentence").forEach((el) => {
-    el.classList.toggle("is-active", Number(el.dataset.sentence) === sentenceIndex);
-  });
-  const active = lessonBox.querySelector(".lesson-sentence.is-active");
-  if (active) {
-    active.scrollIntoView({ block: "center", behavior: "smooth" });
+// 预取就绪后按段渲染（一段一高亮单元），与后端音频段 1:1 对齐
+function renderLessonSegments(segTexts, info) {
+  if (!segTexts || !segTexts.length) return;
+  const html = segTexts
+    .map((t, i) => {
+      const isHead =
+        i === 0 ||
+        /^(\d+[.、)）]|[一二三四五六七八九十]+[、）:：])/.test(t) ||
+        (t.length <= 16 && !/[。！？；]$/.test(t));
+      const body = escapeHtml(t);
+      return isHead
+        ? `<h3 class="lesson-heading"><span class="lesson-segment" data-seg="${i}">${body}</span></h3>`
+        : `<p class="lesson-paragraph"><span class="lesson-segment" data-seg="${i}">${body}</span></p>`;
+    })
+    .join("");
+  lessonBox.innerHTML = html;
+  lessonTotalSec = info && info.total ? info.total : 0;
+  if (lessonProgressRow) lessonProgressRow.classList.remove("hidden");
+  if (lessonProgress) {
+    lessonProgress.disabled = !(info && info.total > 0);
+    lessonProgress.max = info && info.total > 0 ? Math.round(info.total) : 1000;
+    lessonProgress.value = 0;
   }
+  if (lessonTime) {
+    lessonTime.textContent = `00:00 / ${
+      lessonTotalSec > 0 ? window.formatLessonTime?.(lessonTotalSec) || "--:--" : "--:--"
+    }`;
+  }
+  const multi = !!(info && (info.count || 0) > 1);
+  if (prevSegBtn) prevSegBtn.classList.toggle("hidden", !multi);
+  if (nextSegBtn) nextSegBtn.classList.toggle("hidden", !multi);
+}
+
+function setLessonHighlight(segIndex) {
+  if (segIndex < 0) {
+    clearLessonHighlight();
+    return;
+  }
+  lessonBox.querySelectorAll(".lesson-segment").forEach((el) => {
+    el.classList.toggle("is-active", Number(el.dataset.seg) === segIndex);
+  });
+  const active = lessonBox.querySelector(`.lesson-segment[data-seg="${segIndex}"]`);
+  if (active) active.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function clearLessonHighlight() {
-  lessonBox.querySelectorAll(".lesson-sentence.is-active").forEach((el) =>
+  lessonBox.querySelectorAll(".lesson-segment.is-active").forEach((el) =>
     el.classList.remove("is-active")
   );
+}
+
+function updateLessonProgress(now, total) {
+  if (total > 0) lessonTotalSec = total;
+  if (lessonProgress && total > 0) {
+    lessonProgress.max = Math.round(total);
+    if (!lessonSeeking) {
+      lessonProgress.value = Math.min(Math.round(now), Math.round(total));
+    }
+  }
+  if (lessonTime && !lessonSeeking) {
+    const t = total > 0 ? window.formatLessonTime?.(total) || "--:--" : "--:--";
+    lessonTime.textContent = `${window.formatLessonTime?.(now) || "00:00"} / ${t}`;
+  }
 }
 
 explainBtn.addEventListener("click", async () => {
@@ -1271,6 +1320,12 @@ explainBtn.addEventListener("click", async () => {
     navigateTo("upload");
     return;
   }
+  // 重置旧讲解的播放状态与 UI
+  window.stopLessonPlayback?.();
+  setLessonStopped();
+  if (lessonProgressRow) lessonProgressRow.classList.add("hidden");
+  if (prevSegBtn) prevSegBtn.classList.add("hidden");
+  if (nextSegBtn) nextSegBtn.classList.add("hidden");
   lessonBox.textContent = "讲解生成中...";
   try {
     const data = await apiPost(
@@ -1285,7 +1340,12 @@ explainBtn.addEventListener("click", async () => {
     updateMaxReached("quiz");
     persistState();
     updateNavButtons();
-    window.maybeAutoSpeak?.(data.lesson_text);
+    // 生成后自动预取语音段，完成后渲染段级 DOM 并就绪播报
+    window.prefetchLessonAudio?.(data.lesson_text, {
+      onStatus: (msg) => { if (lessonPlayStatus) lessonPlayStatus.textContent = msg; },
+      onReady: (segTexts, info) => renderLessonSegments(segTexts, info),
+      onProgress: (now, total) => updateLessonProgress(now, total),
+    });
   } catch (err) {
     lessonBox.textContent = "讲解生成失败";
     showBanner(err.message || "生成讲解失败", "error");
@@ -1295,6 +1355,13 @@ explainBtn.addEventListener("click", async () => {
 const pauseLessonBtn = document.getElementById("pauseLessonBtn");
 const stopLessonBtn = document.getElementById("stopLessonBtn");
 const lessonPlayStatus = document.getElementById("lessonPlayStatus");
+const lessonProgressRow = document.getElementById("lessonProgressRow");
+const lessonProgress = document.getElementById("lessonProgress");
+const lessonTime = document.getElementById("lessonTime");
+const prevSegBtn = document.getElementById("prevSegBtn");
+const nextSegBtn = document.getElementById("nextSegBtn");
+let lessonSeeking = false;
+let lessonTotalSec = 0;
 
 function setLessonPlaying(playing) {
   playLessonBtn.classList.toggle("hidden", playing);
@@ -1309,6 +1376,12 @@ function setLessonStopped() {
   stopLessonBtn.classList.add("hidden");
   if (lessonPlayStatus) lessonPlayStatus.textContent = "";
   clearLessonHighlight();
+  if (lessonProgress) lessonProgress.value = 0;
+  if (lessonTime) {
+    lessonTime.textContent = `00:00 / ${
+      lessonTotalSec > 0 ? window.formatLessonTime?.(lessonTotalSec) || "--:--" : "--:--"
+    }`;
+  }
 }
 
 playLessonBtn.addEventListener("click", () => {
@@ -1318,33 +1391,53 @@ playLessonBtn.addEventListener("click", () => {
   }
   window.primeAudioOnUserGesture?.();
   setLessonPlaying(true);
-  window.playTtsKaraoke?.(
-    state.lessonText,
-    lessonBox,
-    {
-      onSentence: (i) => setLessonHighlight(i),
-      onStatus: (msg) => {
-        if (lessonPlayStatus) lessonPlayStatus.textContent = msg;
-      },
-      onEnd: () => setLessonStopped(),
-    }
-  );
+  window.playLessonAudio?.({
+    onSegment: (i) => setLessonHighlight(i),
+    onStatus: (msg) => {
+      if (lessonPlayStatus) lessonPlayStatus.textContent = msg;
+    },
+    onProgress: (now, total) => updateLessonProgress(now, total),
+    onEnd: () => setLessonStopped(),
+  });
 });
 
 pauseLessonBtn?.addEventListener("click", () => {
-  const paused = window.toggleTtsPause?.();
+  const paused = window.toggleLessonPause?.();
   if (paused === true) {
     pauseLessonBtn.textContent = "继续";
     if (lessonPlayStatus) lessonPlayStatus.textContent = "已暂停";
   } else if (paused === false) {
     pauseLessonBtn.textContent = "暂停";
+    if (lessonPlayStatus) lessonPlayStatus.textContent = "播放中…";
   }
 });
 
 stopLessonBtn?.addEventListener("click", () => {
-  window.stopTts?.();
+  window.stopLessonPlayback?.();
   setLessonStopped();
 });
+
+prevSegBtn?.addEventListener("click", () => window.seekLessonSegment?.(-1));
+nextSegBtn?.addEventListener("click", () => window.seekLessonSegment?.(1));
+
+if (lessonProgress) {
+  lessonProgress.addEventListener("pointerdown", () => {
+    lessonSeeking = true;
+  });
+  lessonProgress.addEventListener("input", () => {
+    const target = Number(lessonProgress.value);
+    const total = Number(lessonProgress.max);
+    if (lessonTime) {
+      lessonTime.textContent = `${window.formatLessonTime?.(target) || "00:00"} / ${
+        total > 0 ? window.formatLessonTime?.(total) || "--:--" : "--:--"
+      }`;
+    }
+  });
+  lessonProgress.addEventListener("change", () => {
+    lessonSeeking = false;
+    window.seekLesson?.(Number(lessonProgress.value));
+  });
+}
 
 generateQuizBtn.addEventListener("click", async () => {
   if (!state.lessonText) {

@@ -140,3 +140,42 @@ def test_session_start_requires_credentials():
         json={"grade": "初一", "subject": "数学", "file_ids": ["f1"]},
     )
     assert res.status_code == 401
+
+
+# ---------- TTS 分段：segment.text 契约 ----------
+def test_synthesize_speech_segments_include_text(monkeypatch):
+    """每段音频必须携带其对应文本，供前端段级高亮对齐。"""
+    import app.audio_service as asr
+
+    # 让短文本也能触发多段分组（默认 900 字节）
+    monkeypatch.setattr(asr, "TTS_MAX_TEXT_BYTES", 30)
+
+    # 绕过真实网络：合成单段返回 dummy 音频
+    monkeypatch.setattr(
+        asr,
+        "_synthesize_single_chunk",
+        lambda client, api_key, text, voice, rate: {
+            "audio_url": None,
+            "audio_base64": "AAAA",
+        },
+    )
+
+    # 绕过 httpx.Client 真实建连
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(asr.httpx, "Client", lambda **k: _FakeClient())
+
+    text = "第一句话内容。第二句话内容。第三句话内容。第四句话内容。"
+    out = asr.synthesize_speech("key", text, "voice", 1.0)
+
+    assert out["chunk_count"] == len(out["segments"])
+    assert out["chunk_count"] > 1
+    assert [s["index"] for s in out["segments"]] == list(range(out["chunk_count"]))
+    assert all(s.get("text") for s in out["segments"])
+    joined = "".join(s["text"] for s in out["segments"])
+    assert joined.replace(" ", "") == text.replace(" ", "")

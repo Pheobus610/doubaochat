@@ -916,6 +916,296 @@ function stopTts() {
   setVoiceStatus("");
 }
 
+// ===== Lesson 分段播放引擎（HTML5 audio，段级高亮 + 整篇 seek） =====
+// 与简单 playTts 路径解耦：用单个持久 <audio> 元素驱动顺序播放，
+// 暂停/继续/停止段内即时生效，进度条可跨段拖动。
+let lessonSegments = [];          // [{text, audioSrc, duration, metaLoaded}]
+let lessonCurrentIndex = -1;
+let lessonIsPlaying = false;
+let lessonIsPaused = false;
+let lessonTotalDuration = 0;
+let lessonCumStart = [];          // cumStart[i] = sum(durations[0..i-1])
+let lessonPlayToken = 0;          // 播放期重入守卫
+let lessonPrefetchToken = 0;      // 预取期重入守卫
+let lessonPrefetchAbort = null;
+let lessonAudioEl = null;
+let lessonCallbacks = {};
+let lessonPendingPlay = false;
+
+function formatLessonTime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// 用临时 <audio preload=metadata> 探测单段时长，base64 data URL 在主流浏览器可靠
+function probeAudioDuration(src) {
+  return new Promise((resolve) => {
+    const a = document.createElement("audio");
+    a.preload = "metadata";
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { a.removeAttribute("src"); a.load(); } catch (_) {}
+      resolve(v);
+    };
+    a.addEventListener("loadedmetadata", () => {
+      const d = a.duration;
+      finish(Number.isFinite(d) && d > 0 ? d : 0);
+    });
+    a.addEventListener("error", () => finish(0));
+    setTimeout(() => finish(0), 8000);
+    a.src = src;
+  });
+}
+
+async function preloadSegmentDurations(prefetchToken) {
+  const CONCURRENCY = 8;
+  let idx = 0;
+  async function worker() {
+    while (idx < lessonSegments.length) {
+      const i = idx++;
+      if (prefetchToken !== lessonPrefetchToken) return;
+      lessonSegments[i].duration = await probeAudioDuration(lessonSegments[i].audioSrc);
+      lessonSegments[i].metaLoaded = true;
+    }
+  }
+  const n = Math.min(CONCURRENCY, lessonSegments.length);
+  await Promise.all(Array.from({ length: n }, worker));
+}
+
+function computeLessonTimeline() {
+  lessonCumStart = [0];
+  for (let i = 0; i < lessonSegments.length; i++) {
+    lessonCumStart.push(lessonCumStart[i] + (lessonSegments[i].duration || 0));
+  }
+  lessonTotalDuration = lessonCumStart[lessonSegments.length] || 0;
+}
+
+function ensureLessonAudioEl() {
+  if (lessonAudioEl) return lessonAudioEl;
+  lessonAudioEl = new Audio();
+  lessonAudioEl.style.display = "none";
+  document.body.appendChild(lessonAudioEl);
+  lessonAudioEl.addEventListener("timeupdate", onLessonTimeUpdate);
+  lessonAudioEl.addEventListener("ended", onLessonEnded);
+  // play 事件统一校正状态；pause 状态由 toggleLessonPlayback 显式管理，
+  // 避免 setLessonSrc 内部 a.pause() 误判为用户暂停
+  lessonAudioEl.addEventListener("play", () => {
+    lessonIsPlaying = true;
+    lessonIsPaused = false;
+  });
+  return lessonAudioEl;
+}
+
+function lessonPlayStatusMsg() {
+  const total = lessonSegments.length;
+  if (!total) return "播放中…";
+  return total > 1 ? `播放中 ${lessonCurrentIndex + 1} / ${total}` : "播放中…";
+}
+
+// 生成讲解后自动预取全部音频段并预载时长
+async function prefetchLessonAudio(text, callbacks = {}) {
+  const clean = (text || "").trim();
+  if (!clean) return;
+  const myToken = ++lessonPrefetchToken;
+  if (lessonPrefetchAbort) lessonPrefetchAbort.abort();
+  lessonPrefetchAbort = new AbortController();
+  lessonCallbacks = callbacks;
+  // 重新生成讲解时停掉旧播放
+  stopLessonPlayback(false);
+
+  callbacks.onStatus?.("正在合成语音…");
+  try {
+    const s = loadSettings();
+    const res = await fetch("/api/tts", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text: clean, voice: s.voice, rate: 1.0 }),
+      signal: lessonPrefetchAbort.signal,
+    });
+    if (res.status === 401) { onApiUnauthorized(); return; }
+    if (myToken !== lessonPrefetchToken) return;
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : "语音合成失败");
+    }
+    const segs = (data.segments || [])
+      .map((seg) => ({
+        text: seg.text || "",
+        audioSrc: segmentToAudioSrc(seg),
+        duration: 0,
+        metaLoaded: false,
+      }))
+      .filter((seg) => seg.audioSrc);
+    if (!segs.length) throw new Error("未返回音频数据");
+    lessonSegments = segs;
+    await preloadSegmentDurations(myToken);
+    if (myToken !== lessonPrefetchToken) return;
+    computeLessonTimeline();
+    const segTexts = lessonSegments.map((seg) => seg.text);
+    callbacks.onReady?.(segTexts, {
+      total: lessonTotalDuration,
+      count: lessonSegments.length,
+    });
+    callbacks.onStatus?.(
+      lessonTotalDuration > 0
+        ? `语音就绪（${lessonSegments.length} 段，约 ${formatLessonTime(lessonTotalDuration)}）`
+        : `语音就绪（${lessonSegments.length} 段）`
+    );
+    if (lessonPendingPlay) {
+      lessonPendingPlay = false;
+      playLessonAudio();
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    callbacks.onStatus?.("");
+    showBanner?.(err.message || "语音预取失败", "error");
+  }
+}
+
+function playLessonAudio(callbacks) {
+  if (callbacks) lessonCallbacks = { ...lessonCallbacks, ...callbacks };
+  if (!lessonSegments.length) {
+    // 预取未完成：登记待播，onReady 内自动启动
+    lessonPendingPlay = true;
+    lessonCallbacks.onStatus?.("正在合成语音，请稍候…");
+    return;
+  }
+  primeAudioOnUserGesture();
+  const myToken = ++lessonPlayToken;
+  lessonIsPlaying = true;
+  lessonIsPaused = false;
+  if (lessonCurrentIndex < 0) lessonCurrentIndex = 0;
+  ensureLessonAudioEl();
+  highlightLessonSegment(lessonCurrentIndex);
+  lessonCallbacks.onStatus?.(lessonPlayStatusMsg());
+  setLessonSrc(lessonCurrentIndex, 0, true, myToken);
+}
+
+// 切换到第 j 段并可选 seek + 续播
+function setLessonSrc(j, seekOffset = 0, forcePlay = false, token = lessonPlayToken) {
+  const a = ensureLessonAudioEl();
+  lessonCurrentIndex = j;
+  a.pause();
+  a.src = lessonSegments[j].audioSrc;
+  const onMeta = () => {
+    a.removeEventListener("loadedmetadata", onMeta);
+    if (token !== lessonPlayToken) return;
+    if (seekOffset > 0 && seekOffset < (a.duration || 0)) {
+      try { a.currentTime = seekOffset; } catch (_) {}
+    }
+    if (forcePlay && lessonIsPlaying && !lessonIsPaused) {
+      a.play().catch((err) => {
+        if (err?.name === "NotAllowedError") {
+          lessonCallbacks.onStatus?.("请点击「播报讲解」开始播放");
+        }
+      });
+    }
+  };
+  a.addEventListener("loadedmetadata", onMeta);
+}
+
+function onLessonEnded() {
+  if (lessonCurrentIndex < lessonSegments.length - 1) {
+    const next = lessonCurrentIndex + 1;
+    lessonCurrentIndex = next;
+    highlightLessonSegment(next);
+    lessonCallbacks.onStatus?.(lessonPlayStatusMsg());
+    setLessonSrc(next, 0, true);
+  } else {
+    finishLesson();
+  }
+}
+
+function onLessonTimeUpdate() {
+  if (lessonCurrentIndex < 0) return;
+  const now = (lessonCumStart[lessonCurrentIndex] || 0) + (lessonAudioEl.currentTime || 0);
+  lessonCallbacks.onProgress?.(now, lessonTotalDuration);
+}
+
+function toggleLessonPause() {
+  if (!lessonIsPlaying || !lessonAudioEl) return null;
+  if (lessonIsPaused) {
+    lessonIsPaused = false;
+    lessonAudioEl.play().catch(() => {
+      lessonCallbacks.onStatus?.("请点击「播报讲解」开始播放");
+    });
+    return false; // 已恢复
+  }
+  lessonIsPaused = true;
+  lessonAudioEl.pause();
+  return true; // 已暂停
+}
+
+function stopLessonPlayback(triggerOnEnd = true) {
+  lessonPlayToken++;
+  lessonIsPlaying = false;
+  lessonIsPaused = false;
+  lessonCurrentIndex = -1;
+  lessonPendingPlay = false;
+  if (lessonAudioEl) {
+    lessonAudioEl.pause();
+    lessonAudioEl.removeAttribute("src");
+    try { lessonAudioEl.load(); } catch (_) {}
+  }
+  if (triggerOnEnd) lessonCallbacks.onEnd?.();
+}
+
+function finishLesson() {
+  lessonIsPlaying = false;
+  lessonIsPaused = false;
+  lessonCurrentIndex = -1;
+  if (lessonAudioEl) {
+    lessonAudioEl.pause();
+    lessonAudioEl.removeAttribute("src");
+    try { lessonAudioEl.load(); } catch (_) {}
+  }
+  lessonCallbacks.onSegment?.(-1);
+  lessonCallbacks.onStatus?.("");
+  lessonCallbacks.onProgress?.(0, lessonTotalDuration);
+  lessonCallbacks.onEnd?.();
+}
+
+function highlightLessonSegment(i) {
+  lessonCallbacks.onSegment?.(i);
+}
+
+// 整篇拖动：targetOverall 秒 → 定位段 j + 段内 offset
+function seekLesson(targetOverall) {
+  if (!lessonSegments.length || lessonTotalDuration <= 0) return;
+  let j = 0;
+  for (let k = 0; k < lessonSegments.length; k++) {
+    if ((lessonCumStart[k] || 0) <= targetOverall + 0.001) j = k;
+    else break;
+  }
+  const offset = Math.max(0, targetOverall - (lessonCumStart[j] || 0));
+  const forcePlay = lessonIsPlaying && !lessonIsPaused;
+  if (j !== lessonCurrentIndex) {
+    highlightLessonSegment(j);
+    setLessonSrc(j, offset, forcePlay);
+  } else if (lessonAudioEl) {
+    try { lessonAudioEl.currentTime = offset; } catch (_) {}
+  }
+  // 暂停态拖拽：仅更新位置不续播，手动推一次进度显示
+  if (!forcePlay) {
+    lessonCallbacks.onProgress?.(targetOverall, lessonTotalDuration);
+  }
+}
+
+function seekLessonSegment(delta) {
+  if (!lessonSegments.length) return;
+  const cur = lessonCurrentIndex < 0 ? 0 : lessonCurrentIndex;
+  const target = Math.min(lessonSegments.length - 1, Math.max(0, cur + delta));
+  if (target === lessonCurrentIndex) return;
+  const forcePlay = lessonIsPlaying && !lessonIsPaused;
+  highlightLessonSegment(target);
+  setLessonSrc(target, 0, forcePlay);
+  lessonCallbacks.onStatus?.(lessonPlayStatusMsg());
+}
+
 function bindSpeechButtonToInput(buttonId, inputId, autoSubmit = false) {
   const btn = document.getElementById(buttonId);
   if (!btn) return;
@@ -946,6 +1236,13 @@ window.playTts = playTts;
 window.playTtsKaraoke = playTtsKaraoke;
 window.toggleTtsPause = toggleTtsPause;
 window.stopTts = stopTts;
+window.prefetchLessonAudio = prefetchLessonAudio;
+window.playLessonAudio = playLessonAudio;
+window.toggleLessonPause = toggleLessonPause;
+window.stopLessonPlayback = stopLessonPlayback;
+window.seekLesson = seekLesson;
+window.seekLessonSegment = seekLessonSegment;
+window.formatLessonTime = formatLessonTime;
 window.setGlobalLoading = setGlobalLoading;
 window.withGlobalLoading = withGlobalLoading;
 window.isGlobalLoading = isGlobalLoading;
