@@ -14,9 +14,7 @@ class ArkConfigError(Exception):
     pass
 
 
-def _resolve_credentials(
-    api_key: str | None, model: str | None
-) -> tuple[str, str]:
+def _resolve_credentials(api_key: str | None, model: str | None) -> tuple[str, str]:
     key = (api_key or "").strip() or ARK_API_KEY
     mdl = (model or "").strip() or ARK_MODEL
     if not key or not mdl:
@@ -37,9 +35,7 @@ def upload_pdf(local_path: Path, api_key: str | None = None) -> dict[str, str]:
         file_obj = client.files.create(file=f, purpose="user_data")
     processed = client.files.wait_for_processing(id=file_obj.id)
     if processed.status != "active":
-        raise RuntimeError(
-            f"PDF 处理失败，状态: {processed.status}（file_id={processed.id}）"
-        )
+        raise RuntimeError(f"PDF 处理失败，状态: {processed.status}（file_id={processed.id}）")
     return {"file_id": processed.id, "filename": local_path.name}
 
 

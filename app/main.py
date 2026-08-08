@@ -3,8 +3,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,33 @@ app = FastAPI(title="数学语音学习")
 _sessions: dict[str, dict] = {}
 ALLOWED_GRADES = {"初一", "初二", "初三"}
 ALLOWED_SUBJECTS = {"数学", "语文", "英语"}
+
+# 访问口令放行的路径：首页、静态资源、健康检查。其余接口在开启 ACCESS_TOKEN 后需鉴权。
+_PUBLIC_PATHS = {"/", "/api/health"}
+
+
+@app.middleware("http")
+async def access_token_gate(request: Request, call_next):
+    token = config.ACCESS_TOKEN
+    if not token:
+        return await call_next(request)
+
+    path = request.url.path
+    if path in _PUBLIC_PATHS or path.startswith("/static"):
+        return await call_next(request)
+
+    provided = request.headers.get("x-access-token", "").strip()
+    if not provided:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            provided = auth[len("bearer ") :].strip()
+
+    if provided != token:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "需要访问口令：请在「设置」中填写访问口令后重试"},
+        )
+    return await call_next(request)
 
 
 class ChatRequest(BaseModel):
@@ -214,14 +241,7 @@ def _get_learning_or_400(session: dict[str, Any]) -> dict[str, Any]:
 
 
 def _norm_text(text: str) -> str:
-    return (
-        (text or "")
-        .strip()
-        .lower()
-        .replace(" ", "")
-        .replace("。", "")
-        .replace(".", "")
-    )
+    return (text or "").strip().lower().replace(" ", "").replace("。", "").replace(".", "")
 
 
 def _update_stats(learning: dict[str, Any]) -> None:
@@ -279,9 +299,7 @@ def api_tts(
 ):
     api_key, _ = _require_credentials(x_ark_api_key, None)
     try:
-        result = synthesize_speech(
-            api_key, body.text, voice=body.voice, rate=body.rate
-        )
+        result = synthesize_speech(api_key, body.text, voice=body.voice, rate=body.rate)
         return {
             "audio_url": result.get("audio_url"),
             "audio_base64": result.get("audio_base64"),
@@ -372,9 +390,7 @@ def api_quiz_generate(
         raise HTTPException(status_code=400, detail="请先完成 AI 讲解")
 
     count = max(3, min(5, body.count))
-    prompt = quiz_generate_prompt(
-        learning["grade"], learning["subject"], lesson_text, count
-    )
+    prompt = quiz_generate_prompt(learning["grade"], learning["subject"], lesson_text, count)
     try:
         parsed = ask_json_with_files(
             prompt=prompt,
@@ -443,7 +459,8 @@ def api_quiz_answer(
     return {
         "question_id": body.question_id,
         "correct": correct,
-        "feedback": feedback or ("回答正确，继续保持。" if correct else "回答不正确，建议复习相关知识点。"),
+        "feedback": feedback
+        or ("回答正确，继续保持。" if correct else "回答不正确，建议复习相关知识点。"),
         "stats": {
             "correct_count": learning["correct_count"],
             "wrong_count": learning["wrong_count"],
@@ -485,9 +502,7 @@ def api_analysis_wrong(
 
     try:
         analysis = ask_json_text_only(
-            prompt=wrong_analysis_prompt(
-                learning["grade"], learning["subject"], wrong_items
-            ),
+            prompt=wrong_analysis_prompt(learning["grade"], learning["subject"], wrong_items),
             api_key=api_key,
             model=model,
         )
@@ -565,7 +580,8 @@ def api_variants_answer(
     return {
         "question_id": body.question_id,
         "correct": correct,
-        "feedback": feedback or ("回答正确，继续保持。" if correct else "回答不正确，建议复习相关知识点。"),
+        "feedback": feedback
+        or ("回答正确，继续保持。" if correct else "回答不正确，建议复习相关知识点。"),
         "stats": {
             "correct_count": variant_correct,
             "wrong_count": variant_wrong,
@@ -591,9 +607,7 @@ def api_teach_invite(
     lesson_text = learning.get("lesson_text") or "请回顾本次讲解内容。"
     try:
         invite_text = ask_text(
-            prompt=teach_invite_prompt(
-                learning["grade"], learning["subject"], lesson_text
-            ),
+            prompt=teach_invite_prompt(learning["grade"], learning["subject"], lesson_text),
             file_ids=learning["file_ids"],
             api_key=api_key,
             model=model,
@@ -730,9 +744,7 @@ def api_chat(
     api_key, model = _require_credentials(x_ark_api_key, x_ark_model)
 
     client_id = body.client_id or secrets.token_hex(16)
-    session = _sessions.setdefault(
-        client_id, {"file_ids": [], "previous_response_id": None}
-    )
+    session = _sessions.setdefault(client_id, {"file_ids": [], "previous_response_id": None})
 
     file_ids = body.file_ids or session.get("file_ids", [])
     prev_id = body.previous_response_id or session.get("previous_response_id")
@@ -754,9 +766,7 @@ def api_chat(
 
     session["previous_response_id"] = result["response_id"]
     if body.file_ids:
-        session["file_ids"] = list(
-            dict.fromkeys(session.get("file_ids", []) + body.file_ids)
-        )
+        session["file_ids"] = list(dict.fromkeys(session.get("file_ids", []) + body.file_ids))
 
     return ChatResponse(
         reply=result["reply"],

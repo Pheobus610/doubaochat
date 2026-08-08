@@ -3,6 +3,7 @@ const VOICE_STORAGE_KEYS = {
   model: "doubaochat_ark_model",
   voice: "doubaochat_tts_voice",
   autoSpeak: "doubaochat_auto_speak",
+  accessToken: "doubaochat_access_token",
 };
 
 let activeRecorder = null;
@@ -60,14 +61,16 @@ function loadSettings() {
     model: sessionStorage.getItem(VOICE_STORAGE_KEYS.model) || "",
     voice: sessionStorage.getItem(VOICE_STORAGE_KEYS.voice) || "zh_female_cancan_mars_bigtts",
     autoSpeak: sessionStorage.getItem(VOICE_STORAGE_KEYS.autoSpeak) === "1",
+    accessToken: sessionStorage.getItem(VOICE_STORAGE_KEYS.accessToken) || "",
   };
 }
 
-function saveSettings({ apiKey, model, voice, autoSpeak }) {
+function saveSettings({ apiKey, model, voice, autoSpeak, accessToken }) {
   sessionStorage.setItem(VOICE_STORAGE_KEYS.apiKey, apiKey.trim());
   sessionStorage.setItem(VOICE_STORAGE_KEYS.model, model.trim());
   sessionStorage.setItem(VOICE_STORAGE_KEYS.voice, voice.trim() || "zh_female_cancan_mars_bigtts");
   sessionStorage.setItem(VOICE_STORAGE_KEYS.autoSpeak, autoSpeak ? "1" : "0");
+  sessionStorage.setItem(VOICE_STORAGE_KEYS.accessToken, (accessToken || "").trim());
 }
 
 function getApiKey() {
@@ -95,7 +98,18 @@ function authHeaders(extra = {}) {
   const headers = { ...extra };
   if (s.apiKey) headers["X-Ark-Api-Key"] = s.apiKey;
   if (s.model) headers["X-Ark-Model"] = s.model;
+  if (s.accessToken) headers["Authorization"] = `Bearer ${s.accessToken}`;
   return headers;
+}
+
+// 服务端开启访问口令且当前未填写时，统一提示并打开设置弹窗
+function onApiUnauthorized() {
+  if (typeof showBanner === "function") {
+    showBanner("本服务已开启访问口令保护，请在「设置」中填写访问口令后重试", "error");
+  }
+  openSettingsModal();
+  setTimeout(() => document.getElementById("settingsAccessToken")?.focus(), 50);
+  throw new Error("需要访问口令，请在设置中填写后重试");
 }
 
 function openSettingsModal() {
@@ -105,6 +119,7 @@ function openSettingsModal() {
   document.getElementById("settingsModel").value = s.model;
   document.getElementById("settingsVoice").value = s.voice;
   document.getElementById("settingsAutoSpeak").checked = s.autoSpeak;
+  document.getElementById("settingsAccessToken").value = s.accessToken;
   modal.classList.remove("hidden");
 }
 
@@ -124,6 +139,7 @@ function initSettingsUI() {
       model: document.getElementById("settingsModel").value,
       voice: document.getElementById("settingsVoice").value,
       autoSpeak: document.getElementById("settingsAutoSpeak").checked,
+      accessToken: document.getElementById("settingsAccessToken").value,
     });
     closeSettingsModal();
     if (typeof checkHealth === "function") checkHealth();
@@ -335,6 +351,7 @@ async function transcribeWithAsr(blob, filename) {
     headers: authHeaders(),
     body: form,
   });
+  if (res.status === 401) onApiUnauthorized();
   const data = await res.json();
   if (!res.ok) {
     throw new Error(
@@ -718,6 +735,7 @@ async function playTts(text) {
       }),
       signal,
     });
+    if (res.status === 401) onApiUnauthorized();
     if (myToken !== activeTtsToken) return;
 
     const data = await res.json();
@@ -826,6 +844,7 @@ async function playTtsKaraoke(text, _container, callbacks = {}) {
       }),
       signal,
     });
+    if (res.status === 401) onApiUnauthorized();
     if (myToken !== activeTtsToken) return;
 
     const data = await res.json();
@@ -935,6 +954,7 @@ window.bindSpeechButtonToInput = bindSpeechButtonToInput;
 window.openSettingsModal = openSettingsModal;
 window.closeSettingsModal = closeSettingsModal;
 window.authHeaders = authHeaders;
+window.onApiUnauthorized = onApiUnauthorized;
 window.isClientConfigured = isClientConfigured;
 window.getModel = getModel;
 window.enableVoiceFeatures = enableVoiceFeatures;

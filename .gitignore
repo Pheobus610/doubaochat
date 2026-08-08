@@ -1,8 +1,45 @@
+# ---- Python ----
 .venv/
+venv/
+env/
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# ---- 环境与密钥（切勿提交） ----
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- 开发工具缓存 ----
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---- IDE / 编辑器 ----
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ---- 数据库 ----
+*.sqlite3
+*.db
+
+# ---- 日志与临时文件 ----
+*.log
+*.tmp
+
+# ---- 上传文件（运行时生成） ----
 uploads/*
 !uploads/.gitkeep
-.DS_Store
-*.log

@@ -14,8 +14,8 @@ from app.config import (
     SPEECH_CLUSTER,
     SPEECH_PROVIDER,
     SPEECH_TOKEN,
-    TTS_RATE,
     TTS_MAX_TEXT_BYTES,
+    TTS_RATE,
     TTS_VOICE,
 )
 
@@ -130,9 +130,7 @@ def transcribe_audio(api_key: str, file_bytes: bytes, filename: str) -> str:
         )
         if response.status_code >= 400:
             detail = response.text[:500]
-            raise ArkAudioError(
-                f"ASR 请求失败 ({response.status_code}): {detail}"
-            )
+            raise ArkAudioError(f"ASR 请求失败 ({response.status_code}): {detail}")
         if "application/json" in response.headers.get("content-type", ""):
             return _parse_transcription(response.json())
         text = response.text.strip()
@@ -184,9 +182,7 @@ def _synthesize_via_ark(
     )
     if response.status_code >= 400:
         detail = response.text[:500]
-        raise ArkAudioError(
-            f"Ark TTS 失败 ({response.status_code}): {detail}"
-        )
+        raise ArkAudioError(f"Ark TTS 失败 ({response.status_code}): {detail}")
     return _parse_tts_response(response)
 
 
@@ -235,9 +231,7 @@ def _synthesize_via_openspeech(
     response = client.post(url, headers=_openspeech_headers(token), json=payload)
     if response.status_code >= 400:
         detail = response.text[:500]
-        raise ArkAudioError(
-            f"OpenSpeech TTS 失败 ({response.status_code}): {detail}"
-        )
+        raise ArkAudioError(f"OpenSpeech TTS 失败 ({response.status_code}): {detail}")
     parsed = _parse_tts_response(response)
     # OpenSpeech JSON often returns base64 audio data.
     if not parsed.get("audio_url") and parsed.get("audio_base64"):
@@ -265,9 +259,7 @@ def _synthesize_single_chunk(
     for mode in order:
         try:
             if mode == "openspeech":
-                return _synthesize_via_openspeech(
-                    client, api_key, text, voice, rate
-                )
+                return _synthesize_via_openspeech(client, api_key, text, voice, rate)
             return _synthesize_via_ark(client, api_key, text, voice, rate)
         except ArkAudioError as exc:
             errors.append(str(exc))
@@ -290,9 +282,7 @@ def synthesize_speech(
     segments: list[dict[str, Any]] = []
     with httpx.Client(timeout=120.0) as client:
         for index, chunk in enumerate(chunks):
-            result = _synthesize_single_chunk(
-                client, api_key, chunk, selected_voice, selected_rate
-            )
+            result = _synthesize_single_chunk(client, api_key, chunk, selected_voice, selected_rate)
             segments.append(
                 {
                     "index": index,

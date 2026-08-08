@@ -1,0 +1,8 @@
+# 开发与测试依赖（运行时依赖见 requirements.txt）
+-r requirements.txt
+
+# 代码检查与格式化
+ruff==0.11.13
+
+# 单元测试
+pytest==8.3.5

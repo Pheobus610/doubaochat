@@ -1,0 +1,47 @@
+# 版本控制与开发环境
+.git/
+.gitignore
+.github/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# 缓存
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# 本地配置与密钥（容器内通过 --env-file 注入）
+.env
+.env.*
+!.env.example
+
+# 构建产物
+*.egg-info/
+build/
+dist/
+
+# 测试与文档（不进镜像）
+tests/
+*.md
+LICENSE
+
+# 运行时上传文件
+uploads/*
+!uploads/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# 脚本（容器内不需要）
+start.sh
+tunnel.sh
+scripts/
+.pre-commit-config.yaml
+ruff.toml

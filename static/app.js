@@ -568,6 +568,9 @@ async function apiPost(path, payload, loadingMessage = "请稍候…") {
       headers,
       body: JSON.stringify(payload),
     });
+    if (res.status === 401 && typeof window.onApiUnauthorized === "function") {
+      window.onApiUnauthorized();
+    }
     const text = await res.text();
     let data = {};
     if (text) {
@@ -625,6 +628,9 @@ async function uploadFile(file) {
   const doUpload = async () => {
     const headers = typeof window.authHeaders === "function" ? window.authHeaders() : {};
     const res = await fetch("/api/upload", { method: "POST", headers, body: form });
+    if (res.status === 401 && typeof window.onApiUnauthorized === "function") {
+      window.onApiUnauthorized();
+    }
     const data = await res.json();
     if (!res.ok) {
       throw new Error(typeof data.detail === "string" ? data.detail : "上传失败");

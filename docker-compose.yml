@@ -1,0 +1,15 @@
+# 一键部署：docker compose up --build
+# 通过 .env 注入配置；如需公网暴露，请在 .env 设置 ACCESS_TOKEN 并配合反向代理/隧道
+services:
+  web:
+    build: .
+    image: doubaochat
+    container_name: doubaochat
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # 上传文件持久化到宿主机
+      - ./uploads:/app/uploads
+    restart: unless-stopped
