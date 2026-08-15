@@ -1,5 +1,9 @@
+import asyncio
+import logging
 import secrets
+import time
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +32,56 @@ from app.prompts import (
     wrong_analysis_prompt,
 )
 
-app = FastAPI(title="数学语音学习")
+logger = logging.getLogger("doubaochat")
 
 _sessions: dict[str, dict] = {}
+
+
+def _touch_session(session: dict[str, Any]) -> None:
+    """记录会话最近活动时间，供 TTL 清理判定。"""
+    session["last_active"] = time.time()
+
+
+def _sweep_expired_sessions() -> int:
+    """删除超过 SESSION_TTL_SECONDS 无活动的会话，返回清理数量。"""
+    now = time.time()
+    ttl = config.SESSION_TTL_SECONDS
+    expired = [
+        cid
+        for cid, s in list(_sessions.items())
+        if now - s.get("last_active", now) > ttl
+    ]
+    for cid in expired:
+        _sessions.pop(cid, None)
+    return len(expired)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动后台会话清理任务，关闭时取消。"""
+
+    async def _cleanup_loop():
+        while True:
+            await asyncio.sleep(config.SESSION_CLEANUP_INTERVAL)
+            try:
+                n = _sweep_expired_sessions()
+                if n:
+                    logger.info("清理过期会话 %d 个，剩余 %d 个", n, len(_sessions))
+            except Exception:
+                logger.exception("会话清理任务异常")
+
+    task = asyncio.create_task(_cleanup_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="数学语音学习", lifespan=lifespan)
 ALLOWED_GRADES = {"初一", "初二", "初三"}
 ALLOWED_SUBJECTS = {"数学", "语文", "英语"}
 
@@ -40,26 +91,30 @@ _PUBLIC_PATHS = {"/", "/api/health"}
 
 @app.middleware("http")
 async def access_token_gate(request: Request, call_next):
+    # 访问口令校验（仅在配置 ACCESS_TOKEN 时生效）
     token = config.ACCESS_TOKEN
-    if not token:
+    if token:
+        path = request.url.path
+        if path not in _PUBLIC_PATHS and not path.startswith("/static"):
+            provided = request.headers.get("x-access-token", "").strip()
+            if not provided:
+                auth = request.headers.get("authorization", "")
+                if auth.lower().startswith("bearer "):
+                    provided = auth[len("bearer "):].strip()
+            if provided != token:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "需要访问口令：请在「设置」中填写访问口令后重试"},
+                )
+    # 全局异常兜底：未捕获异常返回结构化中文错误（不泄漏堆栈），服务端记录完整 traceback
+    try:
         return await call_next(request)
-
-    path = request.url.path
-    if path in _PUBLIC_PATHS or path.startswith("/static"):
-        return await call_next(request)
-
-    provided = request.headers.get("x-access-token", "").strip()
-    if not provided:
-        auth = request.headers.get("authorization", "")
-        if auth.lower().startswith("bearer "):
-            provided = auth[len("bearer ") :].strip()
-
-    if provided != token:
+    except Exception:
+        logger.exception("未捕获异常 %s %s", request.method, request.url.path)
         return JSONResponse(
-            status_code=401,
-            content={"detail": "需要访问口令：请在「设置」中填写访问口令后重试"},
+            status_code=500,
+            content={"detail": "服务器内部错误，请稍后重试"},
         )
-    return await call_next(request)
 
 
 class ChatRequest(BaseModel):
@@ -230,6 +285,7 @@ def _get_session_or_404(client_id: str) -> dict[str, Any]:
     session = _sessions.get(client_id)
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在，请重新开始学习")
+    _touch_session(session)
     return session
 
 
@@ -333,6 +389,7 @@ def api_session_start(
         client_id,
         {"file_ids": [], "previous_response_id": None},
     )
+    _touch_session(session)
     file_ids = list(dict.fromkeys(body.file_ids))
     session["file_ids"] = file_ids
     session["learning"] = _new_learning_state(grade=grade, subject=subject, file_ids=file_ids)
@@ -745,6 +802,7 @@ def api_chat(
 
     client_id = body.client_id or secrets.token_hex(16)
     session = _sessions.setdefault(client_id, {"file_ids": [], "previous_response_id": None})
+    _touch_session(session)
 
     file_ids = body.file_ids or session.get("file_ids", [])
     prev_id = body.previous_response_id or session.get("previous_response_id")

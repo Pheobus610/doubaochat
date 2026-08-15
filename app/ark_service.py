@@ -7,7 +7,13 @@ from typing import Any
 
 from volcenginesdkarkruntime import Ark
 
-from app.config import ARK_API_KEY, ARK_BASE_URL, ARK_MODEL
+from app.config import (
+    ARK_API_KEY,
+    ARK_BASE_URL,
+    ARK_LLM_MAX_RETRIES,
+    ARK_LLM_TIMEOUT,
+    ARK_MODEL,
+)
 
 
 class ArkConfigError(Exception):
@@ -24,9 +30,19 @@ def _resolve_credentials(api_key: str | None, model: str | None) -> tuple[str, s
     return key, mdl
 
 
+def _make_client(api_key: str) -> Ark:
+    """构造带超时与重试的 Ark 客户端（SDK 内置指数退避，覆盖 429/5xx/超时）。"""
+    return Ark(
+        api_key=api_key,
+        base_url=ARK_BASE_URL,
+        timeout=ARK_LLM_TIMEOUT,
+        max_retries=ARK_LLM_MAX_RETRIES,
+    )
+
+
 def _client(api_key: str | None = None) -> Ark:
     key, _ = _resolve_credentials(api_key, None)
-    return Ark(api_key=key, base_url=ARK_BASE_URL)
+    return _make_client(key)
 
 
 def upload_pdf(local_path: Path, api_key: str | None = None) -> dict[str, str]:
@@ -79,7 +95,7 @@ def ask_with_files(
         raise ValueError("请先上传 PDF 参考资料，或继续已有对话")
 
     key, mdl = _resolve_credentials(api_key, model)
-    client = Ark(api_key=key, base_url=ARK_BASE_URL)
+    client = _make_client(key)
     content: list[dict[str, Any]] = [
         {"type": "input_text", "text": message.strip()},
     ]
@@ -115,7 +131,7 @@ def ask_text(
     if not file_ids:
         raise ValueError("请先上传 PDF 参考资料")
     key, mdl = _resolve_credentials(api_key, model)
-    client = Ark(api_key=key, base_url=ARK_BASE_URL)
+    client = _make_client(key)
     content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt.strip()}]
     for fid in file_ids:
         content.append({"type": "input_file", "file_id": fid})
@@ -160,7 +176,7 @@ def ask_json_text_only(
     model: str | None = None,
 ) -> dict[str, Any]:
     key, mdl = _resolve_credentials(api_key, model)
-    client = Ark(api_key=key, base_url=ARK_BASE_URL)
+    client = _make_client(key)
     response = client.responses.create(
         model=mdl,
         input=[{"role": "user", "content": [{"type": "input_text", "text": prompt.strip()}]}],

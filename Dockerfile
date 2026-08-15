@@ -20,5 +20,9 @@ RUN mkdir -p uploads
 
 EXPOSE 8000
 
+# 健康探针：每 30s 探活 /api/health，连续 3 次失败标记 unhealthy
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" || exit 1
+
 # 生产环境不加 --reload
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
