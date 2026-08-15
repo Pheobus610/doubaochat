@@ -41,6 +41,7 @@ uploads/*
 
 # 脚本（容器内不需要）
 setup.sh
+deploy.sh
 start.sh
 tunnel.sh
 scripts/
