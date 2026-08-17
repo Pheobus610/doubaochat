@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import anyio.to_thread
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
@@ -1043,11 +1044,20 @@ def api_file_preview(file_id: str):
         _preview_files.pop(file_id, None)
         raise HTTPException(status_code=404, detail="文件已被清理，请重新上传")
 
+    # HTTP 头只能用 latin-1 编码，中文文件名会触发 UnicodeEncodeError。
+    # 采用 RFC 5987：filename 给 ASCII 兜底，filename* 给非 ASCII 浏览器使用。
+    ascii_name = target.name.encode("ascii", "ignore").decode("ascii") or "preview.pdf"
+    quoted_name = quote(target.name, safe="")
     return FileResponse(
         target,
         media_type="application/pdf",
         # inline 让浏览器内嵌渲染而非下载
-        headers={"Content-Disposition": f'inline; filename="{target.name}"'},
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="{ascii_name}"; '
+                f"filename*=UTF-8''{quoted_name}"
+            )
+        },
     )
 
 
