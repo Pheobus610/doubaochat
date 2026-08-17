@@ -43,3 +43,7 @@ htmlcov/
 # ---- 上传文件（运行时生成） ----
 uploads/*
 !uploads/.gitkeep
+
+# 运维产物
+logs/
+.server.pid

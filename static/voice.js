@@ -1244,6 +1244,7 @@ window.seekLesson = seekLesson;
 window.seekLessonSegment = seekLessonSegment;
 window.formatLessonTime = formatLessonTime;
 window.setGlobalLoading = setGlobalLoading;
+window.setGlobalLoadingMessage = setGlobalLoadingMessage;
 window.withGlobalLoading = withGlobalLoading;
 window.isGlobalLoading = isGlobalLoading;
 window.maybeAutoSpeak = maybeAutoSpeak;

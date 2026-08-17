@@ -1,4 +1,4 @@
-# 一键部署：docker compose up --build
+# 一键部署：docker compose up -d --build
 # 通过 .env 注入配置；如需公网暴露，请在 .env 设置 ACCESS_TOKEN 并配合反向代理/隧道
 services:
   web:
@@ -12,4 +12,25 @@ services:
     volumes:
       # 上传文件持久化到宿主机
       - ./uploads:/app/uploads
-    restart: unless-stopped
+    # 长期挂载用 always：宿主机重启后也会自动拉起（unless-stopped 在手动停过后不会）
+    restart: always
+    # 防异常内存增长拖垮整机。实测 500 会话仅约 13MB，512M 已有充足余量
+    mem_limit: 512m
+    # 日志轮转：Docker 默认日志无上限，长期挂载几个月后可能比数据本身还大
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 容器内进程数上限，防 fork 炸弹式故障
+    pids_limit: 256
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request as u;
+          u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

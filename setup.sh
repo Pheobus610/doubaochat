@@ -38,16 +38,9 @@ esac
 
 # ---------- 前置检查 ----------
 need_cmd git
-need_cmd python3
-
-py_major=$(python3 -c 'import sys; print(sys.version_info[0])')
-py_minor=$(python3 -c 'import sys; print(sys.version_info[1])')
-if [ "$py_major" -lt 3 ] || { [ "$py_major" -eq 3 ] && [ "$py_minor" -lt 10 ]; }; then
-  echo "❌ 需要 Python 3.10+（项目使用 X | None 语法），当前为 $(python3 --version 2>&1)" >&2
-  echo "   macOS 可用 brew install python@3.11 安装新版本。" >&2
-  exit 1
-fi
-echo "✓ $(python3 --version 2>&1)"
+# 注意：这里不再硬性要求系统 python3 >= 3.10。
+# 老系统（macOS 自带 3.9、CentOS 7、Ubuntu 20.04）上系统 Python 版本低是常态，
+# 下面「虚拟环境」一节会自动挑选合适的解释器，必要时用 uv 装独立的 3.12。
 
 # ---------- 确定工作目录 ----------
 # 若当前目录已有 app/main.py + requirements.txt，视为“已在仓库内”，就地配置
@@ -83,15 +76,74 @@ fi
 cd "$PROJECT_DIR"
 
 # ---------- 虚拟环境 ----------
+# 关键：项目代码使用 `X | None` 语法，必须 Python >= 3.10。
+# 直接 `python3 -m venv` 在只有 3.9 的老系统（CentOS 7、Ubuntu 20.04 等）上
+# 会装出一个能创建但跑不起来的环境，且报错信息晦涩难懂。这里显式检测并兜底。
+PY_BIN=""
+pick_python() {
+  for cand in python3.13 python3.12 python3.11 python3.10 python3; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    if "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+      PY_BIN="$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! pick_python; then
+  cur="$(python3 -V 2>&1 || echo '未安装')"
+  echo "→ 未找到 Python >= 3.10（当前：${cur}），改用 uv 安装独立的 Python 3.12"
+  if ! command -v uv >/dev/null 2>&1; then
+    # uv 装到用户目录，不需要 root，也不污染系统 Python
+    curl -fsSL https://astral.sh/uv/install.sh | sh
+    for p in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+      [ -d "$p" ] && export PATH="$p:$PATH"
+    done
+  fi
+  command -v uv >/dev/null 2>&1 || {
+    echo "❌ uv 安装失败。请手动装 Python 3.10+ 后重试：" >&2
+    echo "   Ubuntu/Debian: sudo apt install -y python3.12 python3.12-venv" >&2
+    echo "   CentOS/RHEL:   sudo yum install -y python3.12" >&2
+    echo "   macOS:         brew install python@3.12" >&2
+    exit 1
+  }
+  uv python install 3.12
+  PY_BIN="$(uv python find 3.12)"
+fi
+# 注意：变量后緊跟全角括号时必须用 ${} 包起来，
+# 否则 bash 会把全角字符当成变量名的一部分，配合 set -u 会报 unbound variable。
+echo "→ 使用 Python：$("$PY_BIN" -V 2>&1) （${PY_BIN}）"
+
 if [ ! -d ".venv" ]; then
   echo "→ 创建虚拟环境 .venv"
-  python3 -m venv .venv
+  "$PY_BIN" -m venv .venv 2>/dev/null || {
+    # 部分发行版把 venv 拆成单独包，缺失时用 uv 兜底
+    echo "→ venv 模块不可用，改用 uv 创建虚拟环境"
+    command -v uv >/dev/null 2>&1 || { curl -fsSL https://astral.sh/uv/install.sh | sh; export PATH="$HOME/.local/bin:$PATH"; }
+    uv venv --python "$PY_BIN" .venv
+  }
+fi
+
+# 校验虚拟环境确实是 3.10+，避免复用了历史遗留的旧环境
+if ! .venv/bin/python -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+  echo "→ 检测到已有 .venv 版本过低（$(.venv/bin/python -V 2>&1)），重建"
+  rm -rf .venv
+  "$PY_BIN" -m venv .venv 2>/dev/null || uv venv --python "$PY_BIN" .venv
 fi
 
 # ---------- 依赖 ----------
 echo "→ 安装依赖（requirements.txt）"
-.venv/bin/pip install --upgrade pip --quiet
-.venv/bin/pip install -r requirements.txt
+# uv 创建的虚拟环境默认不包含 pip，因此不能直接调 .venv/bin/pip
+if .venv/bin/python -m pip --version >/dev/null 2>&1; then
+  .venv/bin/python -m pip install --upgrade pip --quiet
+  .venv/bin/python -m pip install -r requirements.txt
+elif command -v uv >/dev/null 2>&1; then
+  uv pip install --python .venv/bin/python -r requirements.txt
+else
+  echo "❌ 虚拟环境内无 pip 且未找到 uv，无法安装依赖" >&2
+  exit 1
+fi
 
 # ---------- .env ----------
 if [ ! -f ".env" ]; then

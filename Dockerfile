@@ -24,5 +24,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" || exit 1
 
-# 生产环境不加 --reload
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 生产环境不加 --reload。
+# 必须 --workers 1：会话状态存在进程内存字典里，多 worker 会让同一用户的
+# 请求随机命中不同进程，随机报「会话不存在」。20 并发靠线程池即可支撑
+# （已实测 20 并发出题完全并行），无需多 worker。
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "1", "--timeout-keep-alive", "65"]

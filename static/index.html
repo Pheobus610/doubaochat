@@ -28,6 +28,19 @@
   </header>
 
   <main class="layout">
+    <aside class="pdf-pane" id="pdfPane" aria-label="PDF 参考资料">
+      <div class="pdf-pane-head">
+        <span class="pdf-pane-title">参考资料</span>
+        <select id="pdfSelect" class="pdf-select" aria-label="选择要查看的 PDF"></select>
+        <button type="button" id="pdfPaneToggle" class="btn btn-icon pdf-toggle" aria-expanded="true" title="收起/展开" aria-label="收起或展开参考资料">‹</button>
+      </div>
+      <div class="pdf-pane-body" id="pdfPaneBody">
+        <div class="pdf-empty" id="pdfEmpty">
+          <p class="hint-text">上传 PDF 后，可在此随时查看原文。</p>
+        </div>
+        <iframe id="pdfFrame" class="pdf-frame hidden" title="PDF 预览"></iframe>
+      </div>
+    </aside>
     <div class="page-view">
       <section class="page-panel card" data-step="grade" id="page-grade">
         <h2>步骤 1：选择年级与科目</h2>

@@ -18,33 +18,19 @@ def explain_prompt(grade: str, subject: str) -> str:
 
 def quiz_generate_prompt(grade: str, subject: str, lesson_text: str, count: int) -> str:
     return f"""
-你是一名初中{subject}出题老师。请根据以下讲解内容，生成{count}道练习题。
+你是初中{subject}出题老师。根据讲解内容为{grade}学生出{count}道题。
 
-年级：{grade}
-科目：{subject}
 讲解内容：
 {lesson_text}
 
-必须输出JSON，且只能输出JSON，结构如下：
-{{
-  "questions": [
-    {{
-      "id": "q1",
-      "type": "choice|judge|fill",
-      "type_label": "选择题|判断题|填空题",
-      "knowledge_point": "字符串",
-      "question_text": "题干",
-      "options": ["A.xxx", "B.xxx", "C.xxx", "D.xxx"],  // judge/fill可为空数组
-      "answer": "标准答案（如A/对/具体数值）",
-      "explanation": "简短解析"
-    }}
-  ]
-}}
+只输出一个 JSON 对象，不要任何解释、不要代码块标记、不要思考过程：
+{{"questions":[{{"id":"q1","type":"choice","type_label":"选择题","knowledge_point":"知识点","question_text":"题干","options":["A.xxx","B.xxx","C.xxx","D.xxx"],"answer":"A","explanation":"一句话解析"}}]}}
 
-要求：
-1) 题型要覆盖填空、选择、判断。
-2) 难度符合初中水平。
-3) 不要输出额外文字。
+规则：
+1) type 只能是 choice / judge / fill，三种题型都要出现。
+2) choice 必须给 4 个 options；judge 的 answer 为"对"或"错"，options 为 []；fill 的 options 为 []。
+3) 题干简短，难度贴合初中，explanation 控制在 30 字内。
+4) 立即输出 JSON。
 """.strip()
 
 

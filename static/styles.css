@@ -85,8 +85,131 @@ body {
 
 .layout {
   padding: 0.75rem 1.5rem 1rem;
-  max-width: 720px;
+  max-width: 1400px;
   margin: 0 auto;
+  display: grid;
+  /* 左栏 PDF 常驻，右栏为原有步骤内容 */
+  grid-template-columns: minmax(280px, 38%) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+/* 未上传 PDF 时隐藏左栏，右栏恢复单列居中，保持原有观感 */
+.layout.no-pdf {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 720px;
+}
+
+.layout.no-pdf .pdf-pane {
+  display: none;
+}
+
+/* 左栏收起：只留一条窄边可再次展开 */
+.layout.pdf-collapsed {
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+}
+
+.layout.pdf-collapsed .pdf-pane-body,
+.layout.pdf-collapsed .pdf-pane-title,
+.layout.pdf-collapsed .pdf-select {
+  display: none;
+}
+
+.pdf-pane {
+  position: sticky;
+  top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.6rem;
+  box-shadow: var(--shadow-card);
+  max-height: calc(100vh - 8rem);
+  min-height: 20rem;
+  overflow: hidden;
+}
+
+.layout.pdf-collapsed .pdf-pane {
+  min-height: 0;
+  padding: 0.5rem 0.25rem;
+}
+
+.pdf-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.pdf-pane-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pdf-select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+}
+
+.pdf-toggle {
+  width: 1.9rem;
+  height: 1.9rem;
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
+.pdf-pane-body {
+  flex: 1;
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.pdf-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 18rem;
+  border: none;
+  display: block;
+}
+
+.pdf-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 1rem;
+  text-align: center;
+}
+
+/* 窄屏：左右双栏改为上下堆叠，PDF 默认折叠避免挤压主流程 */
+@media (max-width: 900px) {
+  .layout,
+  .layout.pdf-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pdf-pane {
+    position: static;
+    max-height: 60vh;
+    min-height: 0;
+  }
+
+  .layout.pdf-collapsed .pdf-pane {
+    max-height: none;
+  }
 }
 
 @media (max-width: 768px) {

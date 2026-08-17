@@ -11,17 +11,25 @@ HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
 VENV=".venv"
 
-# 1. 虚拟环境
-if [ ! -d "$VENV" ]; then
-  echo "→ 创建虚拟环境 $VENV"
-  "$PYTHON" -m venv "$VENV"
+# 1. 虚拟环境（复用 setup.sh 的版本检测与 uv 兜底，避免装出 3.9 的坏环境）
+if [ ! -d "$VENV" ] || ! "$VENV/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+  echo "→ 准备 Python 环境（需 3.10+）"
+  bash ./setup.sh
 fi
 
 # 2. 依赖（仅在 fastapi 未安装时安装，避免每次启动都等待）
-if ! "$VENV/bin/pip" show fastapi >/dev/null 2>&1; then
+# 注意：uv 创建的虚拟环境默认不含 pip，所以用 python -c 探测、用 uv/python -m pip 安装
+if ! "$VENV/bin/python" -c "import fastapi" >/dev/null 2>&1; then
   echo "→ 安装依赖（requirements.txt）"
-  "$VENV/bin/pip" install --upgrade pip >/dev/null
-  "$VENV/bin/pip" install -r requirements.txt
+  if "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+    "$VENV/bin/python" -m pip install --upgrade pip >/dev/null
+    "$VENV/bin/python" -m pip install -r requirements.txt
+  elif command -v uv >/dev/null 2>&1; then
+    uv pip install --python "$VENV/bin/python" -r requirements.txt
+  else
+    echo "❌ 虚拟环境内既无 pip 也未找到 uv，请运行 ./setup.sh 重建环境" >&2
+    exit 1
+  fi
 fi
 
 # 3. 提示 .env

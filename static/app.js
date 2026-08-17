@@ -339,7 +339,10 @@ function showPage(step) {
   if (step === "quiz" && state.quizQuestions.length) {
     renderCurrentQuestion();
   }
+  syncGenerateButtonLabels();
   persistState();
+  // 首次进入该阶段且无内容时自动生成，省掉一次点击
+  autoGenerateForStep(step);
 }
 
 function navigateTo(step, { replace = false } = {}) {
@@ -531,11 +534,77 @@ function renderFileList() {
       updateNavButtons();
     });
   });
+  renderPdfPane();
 }
 
 function getUploadedFileIds() {
   return state.files.filter((f) => f.file_id && !f.uploading).map((f) => f.file_id);
 }
+
+/* ===== 左栏 PDF 预览 ===== */
+const layoutEl = document.querySelector(".layout");
+const pdfSelect = document.getElementById("pdfSelect");
+const pdfFrame = document.getElementById("pdfFrame");
+const pdfEmpty = document.getElementById("pdfEmpty");
+const pdfPaneToggle = document.getElementById("pdfPaneToggle");
+const PDF_COLLAPSE_KEY = "doubaochat_pdf_collapsed";
+
+function renderPdfPane() {
+  if (!layoutEl || !pdfSelect || !pdfFrame) return;
+  const ready = state.files.filter((f) => f.file_id && !f.uploading);
+  // 没有可预览文件时隐藏左栏，保持原来的单列观感
+  layoutEl.classList.toggle("no-pdf", ready.length === 0);
+  if (!ready.length) {
+    pdfFrame.classList.add("hidden");
+    pdfEmpty?.classList.remove("hidden");
+    pdfFrame.removeAttribute("src");
+    pdfSelect.innerHTML = "";
+    return;
+  }
+
+  // 仅在文件集合变化时重建选项，避免每次渲染都重置用户的选择
+  const signature = ready.map((f) => f.file_id).join(",");
+  if (pdfSelect.dataset.signature !== signature) {
+    pdfSelect.dataset.signature = signature;
+    pdfSelect.innerHTML = ready
+      .map((f) => `<option value="${escapeHtml(f.file_id)}">${escapeHtml(f.filename)}</option>`)
+      .join("");
+  }
+  pdfSelect.classList.toggle("hidden", ready.length <= 1);
+
+  const wanted = ready.some((f) => f.file_id === pdfSelect.value)
+    ? pdfSelect.value
+    : ready[0].file_id;
+  pdfSelect.value = wanted;
+  const url = `/api/file/${encodeURIComponent(wanted)}`;
+  // 同一文件不重复 reload，否则会丢失用户的滚动位置
+  if (pdfFrame.dataset.loaded !== url) {
+    pdfFrame.dataset.loaded = url;
+    pdfFrame.src = url;
+  }
+  pdfFrame.classList.remove("hidden");
+  pdfEmpty?.classList.add("hidden");
+}
+
+function setPdfCollapsed(collapsed) {
+  if (!layoutEl) return;
+  layoutEl.classList.toggle("pdf-collapsed", collapsed);
+  if (pdfPaneToggle) {
+    pdfPaneToggle.textContent = collapsed ? "›" : "‹";
+    pdfPaneToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  }
+  try {
+    localStorage.setItem(PDF_COLLAPSE_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* 隐私模式下 localStorage 可能不可写 */
+  }
+}
+
+pdfPaneToggle?.addEventListener("click", () => {
+  setPdfCollapsed(!layoutEl?.classList.contains("pdf-collapsed"));
+});
+
+pdfSelect?.addEventListener("change", () => renderPdfPane());
 
 async function checkHealth() {
   try {
@@ -549,6 +618,9 @@ async function checkHealth() {
       const model =
         (typeof window.getModel === "function" && window.getModel()) || data.model || "—";
       showBanner(`已连接 · 模型 ${model}`, "ok", 2500);
+      // 首屏时 showPage 早于本函数执行，当时 canUseApi() 还为 false 会跳过自动生成，
+      // 因此确认可用后补一次。
+      autoGenerateForStep(state.currentStep);
       return;
     }
     showBanner(data.message || "请先在设置中填写 API Key 与模型 ID", "error");
@@ -557,17 +629,46 @@ async function checkHealth() {
   }
 }
 
-async function apiPost(path, payload, loadingMessage = "请稍候…") {
+// 接口超时上限（毫秒）。出题/分析这类生成型接口给更长时间，
+// 其余接口较短，避免用户对着 loading 无限空等。
+const API_TIMEOUT_MS = {
+  "/api/quiz/generate": 90000,
+  "/api/analysis/wrong": 90000,
+  "/api/lesson/explain": 120000,
+  "/api/teach/evaluate": 60000,
+  "/api/teach/invite": 60000,
+  "/api/quiz/answer": 45000,
+  "/api/variants/answer": 45000,
+};
+const DEFAULT_API_TIMEOUT_MS = 60000;
+
+async function apiPost(path, payload, loadingMessage = "请稍候…", options = {}) {
   const run = async () => {
     const headers =
       typeof window.authHeaders === "function"
         ? window.authHeaders({ "Content-Type": "application/json" })
         : { "Content-Type": "application/json" };
-    const res = await fetch(path, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+    const timeoutMs = API_TIMEOUT_MS[path] || DEFAULT_API_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res;
+    try {
+      res = await fetch(path, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        throw new Error(
+          `请求超时（已等待 ${Math.round(timeoutMs / 1000)} 秒），模型响应较慢，请重试一次`
+        );
+      }
+      throw new Error("网络异常，请检查连接后重试");
+    } finally {
+      clearTimeout(timer);
+    }
     if (res.status === 401 && typeof window.onApiUnauthorized === "function") {
       window.onApiUnauthorized();
     }
@@ -598,10 +699,163 @@ async function apiPost(path, payload, loadingMessage = "请稍候…") {
     }
     return data;
   };
-  if (typeof window.withGlobalLoading === "function") {
+  if (typeof window.withGlobalLoading === "function" && !options.silent) {
     return window.withGlobalLoading(loadingMessage, run);
   }
   return run();
+}
+
+/* ===== 预生成（后台提前算好下一阶段内容） =====
+ * 思路：讲解生成完后，用户还要花几十秒听语音，这段时间正好用来
+ * 后台把「出题」算好。用户点进做题页时内容已就绪，无需再等。
+ * 注意：错因分析/变式题依赖答题结果，物理上无法提前，故不预取。
+ */
+const prefetch = {
+  // 每个阶段一个槽位：status 为 idle | loading | ready | error
+  quiz: { status: "idle", data: null, error: null, promise: null, token: 0 },
+};
+
+function resetPrefetch(kind) {
+  const slot = prefetch[kind];
+  if (!slot) return;
+  // 递增 token 让仍在飞行的旧请求结果作废，避免污染新一轮内容
+  slot.token += 1;
+  slot.status = "idle";
+  slot.data = null;
+  slot.error = null;
+  slot.promise = null;
+}
+
+/**
+ * 启动一次预取。已在进行或已就绪则直接复用，不会重复发请求。
+ * 静默执行：失败只记录，不弹错误，等用户真正进入该页面时再走正式流程重试。
+ */
+function startPrefetch(kind, fetcher) {
+  const slot = prefetch[kind];
+  if (!slot) return null;
+  if (slot.status === "loading" || slot.status === "ready") {
+    return slot.promise;
+  }
+  const myToken = slot.token;
+  slot.status = "loading";
+  slot.error = null;
+  slot.promise = (async () => {
+    try {
+      const data = await fetcher();
+      // 期间被 reset 过（例如用户重新生成了讲解）则丢弃本次结果
+      if (myToken !== slot.token) return null;
+      slot.data = data;
+      slot.status = "ready";
+      return data;
+    } catch (err) {
+      if (myToken !== slot.token) return null;
+      slot.error = err;
+      slot.status = "error";
+      // 预取失败是"静默降级"，不打扰用户
+      return null;
+    }
+  })();
+  return slot.promise;
+}
+
+/** 取用预取结果：就绪则直接返回；正在飞行则等它完成；否则返回 null 交给调用方自己请求。 */
+async function consumePrefetch(kind) {
+  const slot = prefetch[kind];
+  if (!slot) return null;
+  if (slot.status === "loading" && slot.promise) {
+    await slot.promise;
+  }
+  if (slot.status === "ready" && slot.data) {
+    const data = slot.data;
+    // 取走即失效，避免"重新生成"时拿到旧数据
+    slot.status = "idle";
+    slot.data = null;
+    slot.promise = null;
+    return data;
+  }
+  return null;
+}
+
+/** 后台预取出题：只依赖讲解文本，可与讲解语音播放并行。 */
+function prefetchQuiz() {
+  if (!state.clientId || !state.lessonText.trim()) return;
+  startPrefetch("quiz", () =>
+    apiPost(
+      "/api/quiz/generate",
+      { client_id: state.clientId, count: 5 },
+      "",
+      { silent: true }
+    )
+  );
+}
+
+/* ===== 自动生成 + 按钮状态 =====
+ * 每个阶段首次进入时自动开始生成，用户无需点按钮。
+ * 生成失败或想换一批时，按钮就是"重新生成"入口。
+ */
+let lessonGenerating = false;
+let quizGenerating = false;
+let analysisGenerating = false;
+
+function setGenerateBtnBusy(btn, busy, busyLabel = "生成中…") {
+  if (!btn) return;
+  if (busy) {
+    if (!btn.dataset.idleLabel) btn.dataset.idleLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = busyLabel;
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.idleLabel) btn.textContent = btn.dataset.idleLabel;
+  }
+}
+
+/** 已有内容时把按钮文案降级为"重新生成…"，让首次生成不再需要点击。 */
+function syncGenerateButtonLabels() {
+  if (explainBtn && !lessonGenerating) {
+    const label = state.lessonText ? "重新生成讲解" : "生成讲解";
+    explainBtn.textContent = label;
+    explainBtn.dataset.idleLabel = label;
+  }
+  if (generateQuizBtn && !quizGenerating) {
+    const label = state.quizQuestions.length ? "重新生成练习题" : "生成练习题";
+    generateQuizBtn.textContent = label;
+    generateQuizBtn.dataset.idleLabel = label;
+  }
+  if (analyzeBtn && !analysisGenerating) {
+    const label = state.analysisDone ? "重新生成错题分析" : "生成错题分析";
+    analyzeBtn.textContent = label;
+    analyzeBtn.dataset.idleLabel = label;
+  }
+}
+
+/**
+ * 进入页面时若该阶段还没有内容，则自动开始生成。
+ * 只在"确实缺内容"时触发，因此重复进入同一页不会重复请求。
+ */
+function autoGenerateForStep(step) {
+  if (!canUseApi()) return;
+  if (step === "lesson") {
+    if (!state.lessonText && state.sessionReady && !lessonGenerating) {
+      runGenerateLesson();
+    }
+    return;
+  }
+  if (step === "quiz") {
+    if (!state.quizQuestions.length && state.lessonText && !quizGenerating) {
+      runGenerateQuiz();
+    }
+    return;
+  }
+  if (step === "analysis") {
+    if (
+      !state.analysisDone &&
+      state.quizQuestions.length &&
+      !shouldSkipAnalysis() &&
+      !analysisGenerating
+    ) {
+      runGenerateAnalysis();
+    }
+  }
 }
 
 async function uploadFile(file) {
@@ -1314,12 +1568,21 @@ function updateLessonProgress(now, total) {
   }
 }
 
-explainBtn.addEventListener("click", async () => {
+/**
+ * 生成讲解。完成后立刻启动「出题」后台预取：
+ * 用户接下来要听几十秒语音，这段时间正好把题目算好。
+ */
+async function runGenerateLesson({ force = false } = {}) {
   if (!state.sessionReady) {
     showBanner("请先完成上传并开始学习", "error");
     navigateTo("upload");
     return;
   }
+  if (lessonGenerating) return;
+  lessonGenerating = true;
+  setGenerateBtnBusy(explainBtn, true, "生成中…");
+  // 讲解变了，之前基于旧讲解预取的题目必须作废
+  resetPrefetch("quiz");
   // 重置旧讲解的播放状态与 UI
   window.stopLessonPlayback?.();
   setLessonStopped();
@@ -1340,6 +1603,8 @@ explainBtn.addEventListener("click", async () => {
     updateMaxReached("quiz");
     persistState();
     updateNavButtons();
+    // 关键优化：出题只依赖讲解文本，此刻即可与语音合成并行开跑
+    prefetchQuiz();
     // 生成后自动预取语音段，完成后渲染段级 DOM 并就绪播报
     window.prefetchLessonAudio?.(data.lesson_text, {
       onStatus: (msg) => { if (lessonPlayStatus) lessonPlayStatus.textContent = msg; },
@@ -1349,7 +1614,15 @@ explainBtn.addEventListener("click", async () => {
   } catch (err) {
     lessonBox.textContent = "讲解生成失败";
     showBanner(err.message || "生成讲解失败", "error");
+  } finally {
+    lessonGenerating = false;
+    setGenerateBtnBusy(explainBtn, false);
+    syncGenerateButtonLabels();
   }
+}
+
+explainBtn.addEventListener("click", () => {
+  runGenerateLesson({ force: Boolean(state.lessonText) });
 });
 
 const pauseLessonBtn = document.getElementById("pauseLessonBtn");
@@ -1439,21 +1712,46 @@ if (lessonProgress) {
   });
 }
 
-generateQuizBtn.addEventListener("click", async () => {
+/**
+ * 生成练习题。优先取用后台预取好的结果（此时几乎瞬间完成），
+ * 没有预取结果时才现场请求并显示进度提示。
+ * @param {boolean} force true 表示用户主动"重新生成"，丢弃预取结果
+ */
+async function runGenerateQuiz({ force = false } = {}) {
   if (!state.lessonText) {
     showBanner("请先生成讲解内容", "error");
     navigateTo("lesson");
     return;
   }
+  if (quizGenerating) return;
+  quizGenerating = true;
+  setGenerateBtnBusy(generateQuizBtn, true, "生成中…");
+  if (force) resetPrefetch("quiz");
+
+  // 出题耗时较长，用递进文案让用户知道仍在进行中
+  const tips = [
+    "正在生成练习题…",
+    "正在生成练习题…（AI 正在设计题目）",
+    "正在生成练习题…（马上就好，请勿关闭页面）",
+  ];
+  let tipIdx = 0;
+  let tipTimer = null;
   try {
-    const data = await apiPost(
-      "/api/quiz/generate",
-      {
-        client_id: state.clientId,
-        count: 5,
-      },
-      "正在生成练习题…"
-    );
+    let data = force ? null : await consumePrefetch("quiz");
+    if (!data) {
+      tipTimer = setInterval(() => {
+        tipIdx = Math.min(tipIdx + 1, tips.length - 1);
+        window.setGlobalLoadingMessage?.(tips[tipIdx]);
+      }, 8000);
+      data = await apiPost(
+        "/api/quiz/generate",
+        {
+          client_id: state.clientId,
+          count: 5,
+        },
+        tips[0]
+      );
+    }
     state.quizQuestions = data.questions || [];
     state.quizIndex = 0;
     state.answerResults = {};
@@ -1482,10 +1780,20 @@ generateQuizBtn.addEventListener("click", async () => {
     updateNavButtons();
   } catch (err) {
     showBanner(err.message || "生成题目失败", "error");
+  } finally {
+    if (tipTimer) clearInterval(tipTimer);
+    quizGenerating = false;
+    setGenerateBtnBusy(generateQuizBtn, false);
+    syncGenerateButtonLabels();
   }
+}
+
+generateQuizBtn.addEventListener("click", () => {
+  // 已有题目时，点击即为"重新生成"
+  runGenerateQuiz({ force: state.quizQuestions.length > 0 });
 });
 
-analyzeBtn.addEventListener("click", async () => {
+async function runGenerateAnalysis({ force = false } = {}) {
   if (!state.quizQuestions.length) {
     showBanner("请先生成练习题", "error");
     navigateTo("quiz");
@@ -1494,6 +1802,12 @@ analyzeBtn.addEventListener("click", async () => {
   if (shouldSkipAnalysis()) {
     skipAnalysisToTeach("全部答对，无需错题分析");
     return;
+  }
+  if (analysisGenerating) return;
+  analysisGenerating = true;
+  setGenerateBtnBusy(analyzeBtn, true, "分析中…");
+  if (force) {
+    state.analysisDone = false;
   }
   if (analysisReasonBox) {
     analysisReasonBox.textContent = "分析中...";
@@ -1540,7 +1854,15 @@ analyzeBtn.addEventListener("click", async () => {
       analysisReasonBox.textContent = "分析失败";
     }
     showBanner(err.message || "错题分析失败", "error");
+  } finally {
+    analysisGenerating = false;
+    setGenerateBtnBusy(analyzeBtn, false);
+    syncGenerateButtonLabels();
   }
+}
+
+analyzeBtn.addEventListener("click", () => {
+  runGenerateAnalysis({ force: state.analysisDone });
 });
 
 inviteTeachBtn.addEventListener("click", async () => {
@@ -1644,6 +1966,13 @@ function initApp() {
   renderTeachChat();
   updateTeachRoundUI();
   renderFileList();
+  // 恢复左栏折叠偏好
+  try {
+    setPdfCollapsed(localStorage.getItem(PDF_COLLAPSE_KEY) === "1");
+  } catch {
+    /* localStorage 不可用时保持展开 */
+  }
+  syncGenerateButtonLabels();
   if (state.quizQuestions.length) {
     renderCurrentQuestion();
   }
