@@ -240,7 +240,7 @@ def _should_retry_json(exc: Exception) -> bool:
     text = f"{type(exc).__name__} {exc}".lower()
     if any(hint in text for hint in ("timeout", "timed out", "deadline")):
         return False
-    if isinstance(exc, (json.JSONDecodeError, ValueError)):
+    if isinstance(exc, json.JSONDecodeError | ValueError):
         return True
     return "429" in text or "rate limit" in text
 
