@@ -370,8 +370,15 @@ body {
 }
 
 .page-nav {
+  /* .layout 是两列网格，而 .page-nav 是它的第三个子元素，
+     不跨列的话会被自动排到「第二行第一列」，即 PDF 左栏的正下方
+     （实测：nav 与 pdfPane 的 left/right 完全一致，均为 16/536）。
+     跨满所有列才能让「下一步」落在整个页面的右下角。 */
+  grid-column: 1 / -1;
   display: flex;
-  justify-content: space-between;
+  /* 全宽后若仍用 space-between，两个按钮会被甩到屏幕两端，跨度过大反而难点，
+     因此改为成组靠右。 */
+  justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 0.75rem;
   padding-top: 0.65rem;
@@ -1384,6 +1391,52 @@ body {
   color: var(--error);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+/* 录制状态：红点闪烁 + 文字，让「正在录制」一眼可辨 */
+.recording-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--error);
+  flex-shrink: 0;
+  animation: recording-blink 1s ease-in-out infinite;
+}
+
+@keyframes recording-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recording-dot { animation: none; }
+}
+
+.recording-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--error);
+  flex-shrink: 0;
+}
+
+/* 录制中的按钮用醒目的红色，与「开始录制」的次要色形成对比 */
+.btn-danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.93);
+}
+
+.teach-record-row,
+.teach-audio-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
 }
 
 .mic-btn {

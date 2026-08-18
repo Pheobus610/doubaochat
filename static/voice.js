@@ -399,7 +399,31 @@ function transcribeWithWebSpeech() {
   });
 }
 
+// ===== 互讲页显式录制按钮 =====
+// 原先只有麦克风图标在「话筒/方块」间切换，用户不易看出当前是否在录。
+// 这里用文字明确区分「开始录制 / 结束录制」，并给出状态提示。
+function syncTeachRecordUi(recording) {
+  const label = document.getElementById("teachRecordLabel");
+  if (label) label.textContent = recording ? "结束录制" : "开始录制";
+  const btn = document.getElementById("teachRecordBtn");
+  if (btn) {
+    btn.classList.toggle("btn-danger", recording);
+    btn.classList.toggle("btn-secondary", !recording);
+    btn.setAttribute("aria-pressed", recording ? "true" : "false");
+  }
+  const hint = document.getElementById("teachRecordHint");
+  if (hint) {
+    hint.textContent = recording
+      ? "正在录音，讲完点「结束录制」"
+      : "点击开始录制，讲完再点一次结束";
+  }
+  const status = document.getElementById("recordingStatus");
+  if (status) status.textContent = recording ? "录制中" : "识别中…";
+}
+
 function setRecordingState(btn, recording) {
+  // 互讲页的显式「开始/结束录制」按钮与状态文字
+  syncTeachRecordUi(recording);
   if (!btn) return;
   btn.classList.toggle("recording", recording);
   btn.setAttribute("aria-label", recording ? "停止录音" : "开始语音输入");
@@ -528,8 +552,16 @@ async function startSpeechCapture(buttonId, inputId, autoSubmit = false) {
   }
 
   const current = recorderMap.get(buttonId);
-  if (current?.recording && current.stop) {
-    current.stop();
+  if (current?.recording) {
+    if (current.stop) {
+      current.stop();
+    } else {
+      // getUserMedia 授权对话框期间 stop 尚未就绪。此前这里因 stop 为 null 而
+      // 不进停止分支，直接往下走又启动了第二路录音，导致麦克风流与
+      // recorder 泄漏。现在改为标记待停止，recorder.start() 后立即收尾。
+      current.pendingStop = true;
+      setVoiceStatus("正在取消录音…");
+    }
     return;
   }
 
@@ -599,10 +631,15 @@ async function startSpeechCapture(buttonId, inputId, autoSubmit = false) {
       showBanner?.("录音器异常，请重试", "error");
     };
     recorder.start();
+    const entry = recorderMap.get(buttonId);
     recorderMap.set(buttonId, {
       recording: true,
       stop: () => recorder.stop(),
     });
+    // 授权等待期间用户已经再点了一次，立即停止，避免录音停不下来
+    if (entry?.pendingStop) {
+      recorder.stop();
+    }
   } catch (err) {
     recorderMap.set(buttonId, { recording: false, stop: null });
     setRecordingState(btn, false);
@@ -1236,6 +1273,73 @@ window.playTts = playTts;
 window.playTtsKaraoke = playTtsKaraoke;
 window.toggleTtsPause = toggleTtsPause;
 window.stopTts = stopTts;
+// ===== 互讲页：录制按钮 + 回复播放控制 =====
+// 记录最近一条 AI 回复，供「播放回复」重播（此前只有 autoSpeak 自动播一次，
+// 没听清就再也没法重听，也没有暂停手段）。
+let lastTeachReply = "";
+let teachPlaying = false;
+
+function setTeachReplyText(text) {
+  lastTeachReply = (text || "").trim();
+  const playBtn = document.getElementById("teachPlayBtn");
+  const status = document.getElementById("teachAudioStatus");
+  if (playBtn) playBtn.disabled = !lastTeachReply;
+  if (status) {
+    status.textContent = lastTeachReply ? "可播放 AI 同学的回复" : "暂无可播放的回复";
+  }
+}
+
+function syncTeachAudioUi(playing) {
+  teachPlaying = playing;
+  const playBtn = document.getElementById("teachPlayBtn");
+  const pauseBtn = document.getElementById("teachPauseBtn");
+  if (playBtn) playBtn.classList.toggle("hidden", playing);
+  if (pauseBtn) pauseBtn.classList.toggle("hidden", !playing);
+  const status = document.getElementById("teachAudioStatus");
+  if (status && lastTeachReply) {
+    status.textContent = playing ? "播放中…" : "已暂停，点「播放回复」继续";
+  }
+}
+
+function bindTeachControls() {
+  const recordBtn = document.getElementById("teachRecordBtn");
+  if (recordBtn && recordBtn.dataset.bound !== "1") {
+    recordBtn.dataset.bound = "1";
+    // 与麦克风图标按钮共用同一套录音状态（recorderMap 以 teachMicBtn 为键），
+    // 这样两个入口互不冲突，点哪个都能停。
+    recordBtn.addEventListener("click", () => {
+      startSpeechCapture("teachMicBtn", "teachInput", false);
+    });
+  }
+  const playBtn = document.getElementById("teachPlayBtn");
+  if (playBtn && playBtn.dataset.bound !== "1") {
+    playBtn.dataset.bound = "1";
+    playBtn.addEventListener("click", async () => {
+      if (!lastTeachReply) return;
+      // 已在播放中途暂停过，则继续；否则从头合成播放
+      if (teachPlaying) return;
+      syncTeachAudioUi(true);
+      try {
+        await playTts(lastTeachReply);
+      } finally {
+        syncTeachAudioUi(false);
+      }
+    });
+  }
+  const pauseBtn = document.getElementById("teachPauseBtn");
+  if (pauseBtn && pauseBtn.dataset.bound !== "1") {
+    pauseBtn.dataset.bound = "1";
+    pauseBtn.addEventListener("click", () => {
+      toggleTtsPause();
+      syncTeachAudioUi(false);
+    });
+  }
+}
+
+document.addEventListener("DOMContentLoaded", bindTeachControls);
+
+window.setTeachReplyText = setTeachReplyText;
+window.bindTeachControls = bindTeachControls;
 window.prefetchLessonAudio = prefetchLessonAudio;
 window.playLessonAudio = playLessonAudio;
 window.toggleLessonPause = toggleLessonPause;

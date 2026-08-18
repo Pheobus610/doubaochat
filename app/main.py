@@ -255,7 +255,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="数学语音学习", lifespan=lifespan)
+app = FastAPI(title="Peertalk", lifespan=lifespan)
 ALLOWED_GRADES = {"初一", "初二", "初三"}
 ALLOWED_SUBJECTS = {"数学", "语文", "英语"}
 
@@ -399,7 +399,7 @@ def _format_teach_history(turns: list[dict[str, Any]]) -> str:
         if role == "student":
             label = f"学生（第 {rnd} 轮）" if rnd else "学生"
         else:
-            label = "AI老师"
+            label = "AI同学"
         lines.append(f"{label}：{content}")
     return "\n".join(lines)
 

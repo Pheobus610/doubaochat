@@ -435,7 +435,7 @@ function teachChatLabel(turn) {
   if (turn.role === "student") {
     return turn.round ? `第 ${turn.round} 轮 · 你的讲解` : "你的讲解";
   }
-  return turn.round ? `第 ${turn.round} 轮 · AI 老师` : "AI 老师";
+  return turn.round ? `第 ${turn.round} 轮 · AI 同学` : "AI 同学";
 }
 
 function renderTeachChat() {
@@ -448,8 +448,8 @@ function renderTeachChat() {
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
         </div>
-        <div class="empty-state-title">开始向 AI 老师讲题</div>
-        <div class="empty-state-desc">点击下方「获取 AI 邀请」听老师提问，或直接按住麦克风按钮开始你的讲解（最多 2 轮）。</div>
+        <div class="empty-state-title">开始向 AI 同学讲题</div>
+        <div class="empty-state-desc">点击下方「获取 AI 邀请」听同学提问，或点击「开始录制」讲给他听（最多 2 轮）。</div>
       </div>`;
     return;
   }
@@ -1087,15 +1087,52 @@ function setQuestionActions(question) {
   );
 }
 
+// 返回尚未作答的题目下标数组。
+// 用 answerResults 判定而非「已答数量 vs 总数」比较：同一题重复提交时数量会虚高，
+// 用数量比较会把「答了 3 次第 1 题」误判成「答完 3 题」。
+function getUnansweredIndexes(questions) {
+  const out = [];
+  questions.forEach((q, i) => {
+    if (state.answerResults[q.id] === undefined) out.push(i);
+  });
+  return out;
+}
+
+// 最后一题的按钮文案是「完成答题」，此前 else 分支只是重渲染当前题，
+// 视觉上毫无变化，表现为点击无反应。这里补上真正的完成语义。
+function finishQuestions(questions, setIndex, rerender) {
+  const unanswered = getUnansweredIndexes(questions);
+  if (unanswered.length) {
+    // 直接跳到第一道未答的题，省去用户自己翻找
+    setIndex(unanswered[0]);
+    rerender();
+    updateNavButtons();
+    const nums = unanswered.map((i) => i + 1).join("、");
+    showBanner(
+      `还有 ${unanswered.length} 道题未作答（第 ${nums} 题），已跳转到第 ${unanswered[0] + 1} 题`,
+      "error"
+    );
+    return;
+  }
+  // 已答完则等同「下一步」。复用 goNext 而非自己算下一步，
+  // 这样「全对跳过错题分析」等既有逻辑不会被绕过。
+  goNext();
+}
+
 function goNextQuestion() {
   if (state.quizIndex < state.quizQuestions.length - 1) {
     state.quizIndex += 1;
     renderCurrentQuestion();
     updateNavButtons();
-  } else {
-    renderCurrentQuestion();
-    updateNavButtons();
+    return;
   }
+  finishQuestions(
+    state.quizQuestions,
+    (i) => {
+      state.quizIndex = i;
+    },
+    renderCurrentQuestion
+  );
 }
 
 // 选择题/判断题键盘快捷键
@@ -1370,10 +1407,15 @@ function goNextVariant() {
     state.variantIndex += 1;
     renderCurrentVariant();
     updateNavButtons();
-  } else {
-    renderCurrentVariant();
-    updateNavButtons();
+    return;
   }
+  finishQuestions(
+    state.variantQuestions,
+    (i) => {
+      state.variantIndex = i;
+    },
+    renderCurrentVariant
+  );
 }
 
 document.querySelectorAll(".grade-btn").forEach((btn) => {
@@ -1897,6 +1939,7 @@ inviteTeachBtn.addEventListener("click", async () => {
     renderTeachChat();
     updateTeachRoundUI();
     persistState();
+    window.setTeachReplyText?.(data.invite_text);
     window.maybeAutoSpeak?.(data.invite_text);
   } catch (err) {
     showBanner(err.message || "获取邀请失败", "error");
@@ -1942,7 +1985,10 @@ teachSubmitBtn.addEventListener("click", async () => {
     updateTeachRoundUI();
     persistState();
     const lastAi = [...state.teachTurns].reverse().find((t) => t.role === "ai");
-    window.maybeAutoSpeak?.(lastAi?.content || data.feedback);
+    const replyText = lastAi?.content || data.feedback;
+    // 记住本轮回复，使「播放回复 / 暂停」可用（自动播报只读一次，没听清无法重听）
+    window.setTeachReplyText?.(replyText);
+    window.maybeAutoSpeak?.(replyText);
     if (data.completed || state.learningCompleted) {
       showLearningCompleteModal();
     }
